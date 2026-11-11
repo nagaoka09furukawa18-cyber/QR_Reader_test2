@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V3.0 [TEST]</title>
+    <title>加工進捗管理 V3.0 [DEBUG]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -13,7 +13,6 @@
         .btn-blue { background: #007bff; color: white; }
         .btn-green { background: #28a745; color: white; }
         .btn-gray { background: #6c757d; color: white; }
-        
         .btn-main { width: 100%; padding: 18px; font-size: 18px; margin: 10px 0; display: block; }
         #tehaiDisplay { font-size: 22px; font-weight: bold; margin-bottom: 15px; color: #333; background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #eee; }
         #tehaiDisplay span { color: #007bff; margin-left: 10px; }
@@ -27,6 +26,21 @@
         .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .test-badge { background: #ff9800; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+        
+        /* デバッグモニター用スタイル */
+        #debug-monitor {
+            margin-top: 20px;
+            background: #222;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 11px;
+            text-align: left;
+            padding: 10px;
+            border-radius: 8px;
+            max-height: 150px;
+            overflow-y: auto;
+            word-break: break-all;
+        }
     </style>
 </head>
 <body>
@@ -35,13 +49,12 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【テスト環境】</div>
+    <div class="test-badge">【デバッグ環境】</div>
     <div id="screenWait" class="screen active"><p>読み込み中...</p></div>
     
     <div id="screenMain" class="screen">
         <h2>加工進捗管理 (検証)</h2>
         <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
-        <!-- iOSショートカットを起動してスキャンを行うボタン -->
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
         <button class="btn-gray" onclick="authAdmin()">管理者設定</button>
     </div>
@@ -64,8 +77,7 @@
 
     <div id="screenAuth" class="screen">
         <h3>管理者認証</h3>
-        <input type="password" id="adminPwInput" style="padding: 10px; font-size: 16px; width: 80%; margin-bottom: 10px;">
-        <br>
+        <input type="password" id="adminPwInput" style="padding: 10px; font-size: 16px; width: 80%; margin-bottom: 10px;"><br>
         <button class="btn-blue btn-main" onclick="checkPassword()">ログイン</button>
         <button class="btn-gray" onclick="resetToMain()">戻る</button>
     </div>
@@ -76,10 +88,12 @@
         <div id="configList" style="margin:15px 0; text-align:left;"></div>
         <button class="btn-green btn-main" onclick="saveConfig()">設定保存</button>
     </div>
+
+    <!-- リアルタイムデバッグモニター -->
+    <div id="debug-monitor">[System] デバッグモニター起動...</div>
 </div>
 
 <script>
-    //const GAS_URL = "https://script.google.com/macros/s/AKfycbwUe_IeJYIBaAfJqa2-KNepwKESmkV--q_ana70xwh_big9OU3PAtkBj1R2dZymkI2E/exec";
     const GAS_URL = "https://script.google.com/macros/s/AKfycbwUe_IeJYIBaAfJqa2-KNepwKESmkV--q_ana70xwh_big9OU3PAtkBj1R2dZymkI2E/exec";
 
     let state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
@@ -95,72 +109,46 @@
         isLoaded: false
     };
 
-    function formatTime(dateObj) {
-        const y = dateObj.getFullYear();
-        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-        const d = String(dateObj.getDate()).padStart(2, '0');
-        const h = String(dateObj.getHours()).padStart(2, '0');
-        const min = String(dateObj.getMinutes()).padStart(2, '0');
-        const s = String(dateObj.getSeconds()).padStart(2, '0');
-        const ms = String(dateObj.getMilliseconds()).padStart(3, '0');
-        return `${y}/${m}/${d} ${h}:${min}:${s}.${ms}`;
+    function logDebug(msg) {
+        const monitor = document.getElementById('debug-monitor');
+        if (monitor) {
+            const timeStr = new Date().toTimeString().split(' ')[0] + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
+            monitor.innerHTML += `<div>[${timeStr}] ${msg}</div>`;
+            monitor.scrollTop = monitor.scrollHeight;
+        }
+        console.log(msg);
     }
 
-    const AppLogger = {
-        logs: [],
-        timers: {},
-        startTimes: {},
-        start(stepKey) {
-            this.timers[stepKey] = performance.now();
-            this.startTimes[stepKey] = new Date();
-        },
-        end(stepKey, stepLabel) {
-            if (!this.timers[stepKey]) return;
-            const perfDuration = Math.round(performance.now() - this.timers[stepKey]);
-            const startTimeObj = this.startTimes[stepKey];
-            const endTimeObj = new Date();
-
-            this.logs.push({
-                type: `【${stepKey}】`,
-                step: stepLabel,
-                tehaiNo: state.tehai || "", 
-                startTime: formatTime(startTimeObj),
-                endTime: formatTime(endTimeObj),
-                durationMs: perfDuration,
-                deviceId: deviceId
-            });
-            delete this.timers[stepKey];
-            delete this.startTimes[stepKey];
-        },
-        async flush() {
-            this.logs = [];
-        }
-    };
+    function startScan() {
+        logDebug("▶ [startScan] iOSショートカット呼び出し開始");
+        const currentBaseUrl = window.location.origin + window.location.pathname;
+        const shortcutName = encodeURIComponent("加工スキャン");
+        window.location.href = `shortcuts://run-shortcut?name=${shortcutName}&input=text&text=${encodeURIComponent(currentBaseUrl)}`;
+    }
 
     async function callGas(url) {
         try {
             const resp = await fetch(url);
             return await resp.json();
         } catch(e) {
+            logDebug("❌ 通信エラー: " + e.message);
             return { success: false, message: "通信エラー" };
         }
     }
 
-    AppLogger.start("STEP1");
-
     async function init() {
+        logDebug("▶ [init] ページ初期化・マスター/仮想DBロード開始 (リロードされた可能性あり)");
         document.getElementById('loading-text').innerText = "データ読み込み中...";
         document.getElementById('loading-overlay').style.display = 'flex';
         
         masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         
         if (masters.device && masters.device.config) { 
-            // 端末設定（例: "FG1, FG2"）からすべての担当工程を抽出する
             const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
+            logDebug(`ℹ 対象工程一覧: ${processes.join(', ')}`);
             
             virtualDB.items.clear();
             
-            // すべての担当工程の加工進捗管理DBを一括ロードしてメモリマップに統合
             for (const procName of processes) {
                 try {
                     const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
@@ -171,114 +159,59 @@
                                 virtualDB.items.set(tehaiNo, row);
                             }
                         });
+                        logDebug(`✔ 工程 [${procName}] のアクティブデータ ${res.data.length}件をキャッシュ`);
                     }
                 } catch (e) {
-                    console.error(`【仮想DB】工程 "${procName}" のロード失敗:`, e);
+                    logDebug(`❌ 工程 "${procName}" のロード失敗: ${e}`);
                 }
             }
             virtualDB.isLoaded = true;
+            logDebug(`✔ 仮想DBロード完了 (総キャッシュ件数: ${virtualDB.items.size}件)`);
 
             document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
             document.getElementById('btnStartScan').style.display = "block"; 
+        } else {
+            logDebug("⚠ 端末configが取得できませんでした");
         }
         
         document.getElementById('loading-overlay').style.display = 'none';
         showScreen('screenMain');
 
-        // iOSショートカット経由でQR読み取り後、Webアプリに戻ってきた際に手配Noを自動処理する
+        // URLパラメータの確認
         const urlParams = new URLSearchParams(window.location.search);
         const scannedNo = urlParams.get('no') || urlParams.get('text'); 
+        logDebug(`ℹ URLパラメータ(no/text): ${scannedNo || 'なし'}`);
+
         if (scannedNo) {
             window.history.replaceState({}, document.title, window.location.pathname);
-            onScanSuccess(scannedNo); // サーバー通信なし・メモリマップだけで0秒判定
+            onScanSuccess(scannedNo);
         }
-        
-        AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
-    }
-    
-    async function initVirtualDB(processName) {
-        try {
-            const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
-            if (res && res.success && Array.isArray(res.data)) {
-                virtualDB.items.clear();
-                res.data.forEach(row => {
-                    const tehaiNo = String(row[0]).trim();
-                    if (tehaiNo) {
-                        virtualDB.items.set(tehaiNo, row);
-                    }
-                });
-                virtualDB.isLoaded = true;
-            }
-        } catch (e) {
-            console.error("【仮想DB】初期化エラー:", e);
-        }
-    }
-
-    function triggerBackgroundSync(processName) {
-        setTimeout(async () => {
-            if (!processName) return;
-            try {
-                const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
-                if (res && res.success && Array.isArray(res.data)) {
-                    virtualDB.items.clear();
-                    res.data.forEach(row => {
-                        const tehaiNo = String(row[0]).trim();
-                        if (tehaiNo) {
-                            virtualDB.items.set(tehaiNo, row);
-                        }
-                    });
-                    virtualDB.isLoaded = true;
-                }
-            } catch (err) {
-                console.error("【仮想DB】バックグラウンド同期エラー:", err);
-            }
-        }, 3000);
-    }
-
-    // 【新規】WebアプリのボタンからiOSショートカットを呼び出す処理
-    function startScan() {
-        const currentBaseUrl = window.location.origin + window.location.pathname;
-        const shortcutName = encodeURIComponent("加工スキャン");
-        // iOSショートカットアプリのURLスキーム実行
-        window.location.href = `shortcuts://run-shortcut?name=${shortcutName}&input=text&text=${encodeURIComponent(currentBaseUrl)}`;
     }
 
     async function onScanSuccess(no) {
+        logDebug(`▶ [onScanSuccess] 手配No受取: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
-        selectedCuts = [];
-        targetCutCount = 0;
         
-        AppLogger.end("STEP3", "スキャン開始できるようになって実際にスキャンできるまで");
-        AppLogger.start("STEP4");
-
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
         document.getElementById('button-area').innerHTML = "";
         showScreen('screenDetail');
 
+        // メモリマップだけで0秒判定
+        const targetNo = state.tehai;
+        const foundData = virtualDB.items.get(targetNo);
+
         let res = null;
-
-        if (virtualDB.isLoaded) {
-            const targetNo = state.tehai;
-            const foundData = virtualDB.items.get(targetNo);
-
-            if (foundData) {
-                if (foundData[4] !== "" && foundData[4] != null) {
-                    res = { success: true, mode: "END", workData: foundData, process: foundData[1] };
-                } else {
-                    res = { success: false, mode: "ERROR", message: "開始時間が記録されていません" };
-                }
+        if (foundData) {
+            logDebug(`✔ メモリマップヒット！ 既に開始されています -> END判定`);
+            if (foundData[4] !== "" && foundData[4] != null) {
+                res = { success: true, mode: "END", workData: foundData, process: foundData[1] };
             } else {
-                res = { success: true, mode: "START" };
+                res = { success: false, mode: "ERROR", message: "開始時間が記録されていません" };
             }
         } else {
-            document.getElementById('loading-text').innerText = "確認中...";
-            document.getElementById('loading-overlay').style.display = 'flex';
-            const procListParam = masters.device ? masters.device.config : "";
-            res = await callGas(`${GAS_URL}?action=checkStatus&tehaiNo=${encodeURIComponent(state.tehai)}&processList=${encodeURIComponent(procListParam)}`);
-            document.getElementById('loading-overlay').style.display = 'none';
+            logDebug(`ℹ メモリマップにヒットせず -> START判定`);
+            res = { success: true, mode: "START" };
         }
-
-        AppLogger.end("STEP4", "作業開始/終了確認時間");
 
         if (res.success && res.mode === "END") {
             state.mode = "END";
@@ -322,17 +255,8 @@
     }
 
     function renderStartProcUI() {
-        AppLogger.start("STEP5");
-        state.proc = ''; 
-        state.staff = ''; 
-        state.mac = '';
-        state.cut1 = '';
-        state.cut2 = '';
-        state.cut3 = '';
-        state.wire = '';
-        selectedCuts = [];
-        targetCutCount = 0;
-        
+        logDebug("▶ [renderStartProcUI] 工程選択画面描画");
+        state.proc = ''; state.staff = ''; state.mac = '';
         document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
         document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
         document.getElementById('slot-mac').style.display = 'block';
@@ -352,13 +276,9 @@
     function selectProc(p) { 
         state.proc = p; 
         refreshSlots('proc'); 
-        
         const pUpper = p.toUpperCase();
-        if (pUpper.includes("HT")) {
-            renderStartHtUI();
-        } else {
-            renderStartStaffUI();
-        }
+        if (pUpper.includes("HT")) { renderStartHtUI(); } 
+        else { renderStartStaffUI(); }
     }
 
     function renderStartHtUI() {
@@ -366,35 +286,15 @@
         document.getElementById('slot-mac').style.display = 'none';
         document.getElementById('slot-cut').style.display = 'none';
         document.getElementById('slot-wire').style.display = 'none';
-
-        state.staff = '';
-        state.mac = '';
-        state.cut1 = '';
-        state.cut2 = '';
-        state.cut3 = '';
-        state.wire = '';
+        state.staff = ''; state.mac = '';
         refreshSlots('staff');
 
         const list = masters.htList || [];
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = "HTリスト選択";
-        
-        if (list.length === 0) {
-            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_HTリストにデータがありません</p>";
-            return;
-        }
-
         list.forEach(item => { 
-            const b = document.createElement('button'); 
-            b.className = "btn-blue"; 
-            b.innerText = item; 
-            b.onclick = () => {
-                state.staff = item; 
-                state.mac = "";     
-                refreshSlots('staff');
-                AppLogger.end("STEP5", "工程選択からHTリスト項目選択まで");
-                renderFinalConfirm("開始準備完了"); 
-            }; 
+            const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = item; 
+            b.onclick = () => { state.staff = item; state.mac = ""; refreshSlots('staff'); renderFinalConfirm("開始準備完了"); }; 
             document.getElementById('button-area').appendChild(b); 
         });
     }
@@ -405,13 +305,7 @@
         document.getElementById('slot-mac').style.display = 'block';
         document.getElementById('slot-cut').style.display = 'none';
         document.getElementById('slot-wire').style.display = 'none';
-
-        state.staff = '';
-        state.mac = '';
-        state.cut1 = '';
-        state.cut2 = '';
-        state.cut3 = '';
-        state.wire = '';
+        state.staff = ''; state.mac = '';
         refreshSlots('staff');
 
         const list = masters.staffs.filter(r => String(r[0]).trim() === state.proc).map(r => String(r[1]).split(',')).flat().filter(Boolean);
@@ -423,67 +317,41 @@
         }
     }
 
-    function selectStaff(s) { 
-        state.staff = s; 
-        refreshSlots('staff'); 
-        renderStartMacUI(); 
-    }
+    function selectStaff(s) { state.staff = s; refreshSlots('staff'); renderStartMacUI(); }
 
     function renderStartMacUI() {
         state.mac = '';
         refreshSlots('mac');
-
         const list = [...new Set(masters.machines.filter(r => String(r[0]).trim() === state.proc && String(r[1]).split(',').includes(state.staff)).map(r => String(r[2]).split(',')).flat())].filter(Boolean);
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = "装置選択";
         list.forEach(m => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = m; b.onclick = () => { 
-            state.mac = m; 
-            refreshSlots('mac'); 
-            
+            state.mac = m; refreshSlots('mac'); 
             const pUpper = state.proc.toUpperCase();
-            if (pUpper === "WE1" || pUpper === "WE2") {
-                renderStartWeCutModeUI();
-            } else {
-                AppLogger.end("STEP5", "工程・作業者・装置選択完了");
-                renderFinalConfirm("開始準備完了"); 
-            }
+            if (pUpper === "WE1" || pUpper === "WE2") { renderStartWeCutModeUI(); } 
+            else { renderFinalConfirm("開始準備完了"); }
         }; document.getElementById('button-area').appendChild(b); });
     }
 
     function renderStartWeCutModeUI() {
         document.getElementById('slot-cut').style.display = 'block';
-        selectedCuts = [];
-        targetCutCount = 0;
-        state.cut1 = '';
-        state.cut2 = '';
-        state.cut3 = '';
+        selectedCuts = []; targetCutCount = 0;
+        state.cut1 = ''; state.cut2 = ''; state.cut3 = '';
         refreshSlots('cut');
-
         const modes = [
             { label: "なし", count: 0, color: "btn-gray" },
             { label: "1カット", count: 1, color: "btn-blue" },
             { label: "2カット", count: 2, color: "btn-blue" },
             { label: "3カット", count: 3, color: "btn-blue" }
         ];
-
         document.getElementById('button-area').innerHTML = "";
-        document.getElementById('button-title').innerText = "カット回数（モード選択）";
-
+        document.getElementById('button-title').innerText = "カット回数選択";
         modes.forEach(m => {
-            const b = document.createElement('button');
-            b.className = m.color;
-            b.innerText = m.label;
+            const b = document.createElement('button'); b.className = m.color; b.innerText = m.label;
             b.onclick = () => {
                 targetCutCount = m.count;
-                if (targetCutCount === 0) {
-                    state.cut1 = "なし";
-                    state.cut2 = "";
-                    state.cut3 = "";
-                    refreshSlots('cut');
-                    renderStartWeWireUI();
-                } else {
-                    renderStartWeCutMasterUI(1);
-                }
+                if (targetCutCount === 0) { state.cut1 = "なし"; refreshSlots('cut'); renderStartWeWireUI(); } 
+                else { renderStartWeCutMasterUI(1); }
             };
             document.getElementById('button-area').appendChild(b);
         });
@@ -493,24 +361,15 @@
         refreshSlots('cut');
         const masterList = masters.weCutList || [];
         document.getElementById('button-area').innerHTML = "";
-        document.getElementById('button-title').innerText = `【${stepIndex}回目】カット数選択 (${stepIndex}/${targetCutCount})`;
-
+        document.getElementById('button-title').innerText = `【${stepIndex}回目】カット数選択`;
         masterList.forEach(val => {
-            const b = document.createElement('button');
-            b.className = "btn-blue";
-            b.innerText = val;
+            const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = val;
             b.onclick = () => {
                 selectedCuts.push(val);
-                state.cut1 = selectedCuts[0] || '';
-                state.cut2 = selectedCuts[1] || '';
-                state.cut3 = selectedCuts[2] || '';
+                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCuts[1] || ''; state.cut3 = selectedCuts[2] || '';
                 refreshSlots('cut');
-
-                if (stepIndex < targetCutCount) {
-                    renderStartWeCutMasterUI(stepIndex + 1);
-                } else {
-                    renderStartWeWireUI();
-                }
+                if (stepIndex < targetCutCount) { renderStartWeCutMasterUI(stepIndex + 1); } 
+                else { renderStartWeWireUI(); }
             };
             document.getElementById('button-area').appendChild(b);
         });
@@ -518,46 +377,29 @@
 
     function renderStartWeWireUI() {
         document.getElementById('slot-wire').style.display = 'block';
-        state.wire = '';
-        refreshSlots('wire');
-
+        state.wire = ''; refreshSlots('wire');
         const list = masters.weWireList || [];
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = "線径選択";
-
         list.forEach(wireVal => {
-            const b = document.createElement('button');
-            b.className = "btn-green";
-            b.innerText = wireVal;
-            b.onclick = () => {
-                state.wire = wireVal; 
-                refreshSlots('wire');
-                AppLogger.end("STEP5", "開始準備完了");
-                renderFinalConfirm("開始準備完了");
-            };
+            const b = document.createElement('button'); b.className = "btn-green"; b.innerText = wireVal;
+            b.onclick = () => { state.wire = wireVal; refreshSlots('wire'); renderFinalConfirm("開始準備完了"); };
             document.getElementById('button-area').appendChild(b);
         });
     }
 
     function renderFinalConfirm(msg) {
-        AppLogger.start("STEP6");
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = msg;
         const b = document.createElement('button'); b.className = "btn-main btn-green"; b.innerText = "実行する";
-        b.onclick = () => {
-            AppLogger.end("STEP6", "実行ボタン押下");
-            finalizeAction();
-        };
+        b.onclick = () => { finalizeAction(); };
         document.getElementById('button-area').appendChild(b);
     }
 
-    function restartSelection() {
-        state.mode = "START";
-        renderStartProcUI();
-    }
+    function restartSelection() { state.mode = "START"; renderStartProcUI(); }
 
     async function finalizeAction() {
-        AppLogger.start("STEP7");
+        logDebug("▶ [finalizeAction] データ保存処理開始");
         document.getElementById('loading-text').innerText = "データ保存中...";
         document.getElementById('loading-overlay').style.display = 'flex';
         const devName = masters.device ? masters.device.name : "不明";
@@ -575,10 +417,10 @@
                     `&deviceId=${deviceId}`;
                     
         const res = await callGas(url);
-        AppLogger.end("STEP7", "データ保存完了");
         document.getElementById('loading-overlay').style.display = 'none';
 
         if (res.success) {
+            logDebug("✔ データ保存成功");
             if (state.mode === 'START') {
                 const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
                 virtualDB.items.set(state.tehai, newRow);
@@ -589,9 +431,23 @@
             resetToMain();
             triggerBackgroundSync(state.proc);
         } else {
+            logDebug("❌ データ保存失敗: " + res.message);
             alert("失敗: " + res.message);
         }
-        await AppLogger.flush();
+    }
+
+    function triggerBackgroundSync(processName) {
+        setTimeout(async () => {
+            if (!processName) return;
+            const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
+            if (res && res.success && Array.isArray(res.data)) {
+                res.data.forEach(row => {
+                    const tehaiNo = String(row[0]).trim();
+                    if (tehaiNo) virtualDB.items.set(tehaiNo, row);
+                });
+                logDebug(`✔ バックグラウンド同期完了 (${processName})`);
+            }
+        }, 3000);
     }
 
     function refreshSlots(k) { 
@@ -618,8 +474,7 @@
     
     async function resetToMain() { 
         state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
-        selectedCuts = [];
-        targetCutCount = 0;
+        selectedCuts = []; targetCutCount = 0;
         showScreen('screenMain'); 
     }
     
@@ -629,7 +484,6 @@
         const passwordInput = document.getElementById('adminPwInput');
         const pwValue = passwordInput ? passwordInput.value : "";
         if (!pwValue) { alert("パスワードが違います"); return; }
-
         const res = await callGas(GAS_URL + "?action=getAdminPassword");
         if (res && pwValue === String(res.password).trim()) {
             showScreen('screenConfig');
@@ -643,9 +497,7 @@
                 b.onclick = () => b.className = b.className === "btn-blue" ? "btn-gray" : "btn-blue"; 
                 list.appendChild(b); 
             });
-        } else {
-            alert("パスワードが違います");
-        }
+        } else { alert("パスワードが違います"); }
     }
     
     async function saveConfig() {
