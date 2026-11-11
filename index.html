@@ -154,35 +154,37 @@
         
         masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         
-        document.getElementById('loading-overlay').style.display = 'none';
-        
-        // ★ ここでGASから返ってきた全データを画面にそのまま文字として表示して確認する
-        const debugInfo = `
-          【取得確認】
-          ・プロセス数: ${masters.processes ? masters.processes.length : 0}
-          ・工程リスト: ${JSON.stringify(masters.processes)}
-          ・作業者数: ${masters.staffs ? masters.staffs.length : 0}
-          ・装置数: ${masters.machines ? masters.machines.length : 0}
-          ・端末情報: ${JSON.stringify(masters.device)}
-        `;
-        console.log(debugInfo);
-        // alert(debugInfo); // まずスマホ画面にポップアップで全容を表示させる
-
-        if (masters.device && masters.device.config) {  
-            const primaryProcess = masters.device.config.split(',')[0].trim();
-            await initVirtualDB(primaryProcess);
+        if (masters.device && masters.device.config) { 
+            // 端末に設定されたすべての工程（カンマ区切り）を対象にする
+            const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
+            
+            // すべての担当工程のDBデータを並行して取得し、仮想DBに統合する
+            virtualDB.items.clear();
+            for (const procName of processes) {
+                try {
+                    const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
+                    if (res && res.success && Array.isArray(res.data)) {
+                        res.data.forEach(row => {
+                            const tehaiNo = String(row[0]).trim();
+                            if (tehaiNo) {
+                                virtualDB.items.set(tehaiNo, row);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error(`【仮想DB】工程 "${procName}" のロード失敗:`, e);
+                }
+            }
+            virtualDB.isLoaded = true;
 
             document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
             document.getElementById('btnStartScan').style.display = "block"; 
         }
         
+        document.getElementById('loading-overlay').style.display = 'none';
         showScreen('screenMain');
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const passedTehaiNo = urlParams.get('tehaiNo');
-        if (passedTehaiNo) {
-            onScanSuccess(passedTehaiNo);
-        }
+        
+        AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
     }
     async function initVirtualDB(processName) {
         try {
