@@ -1,1 +1,773 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>加工進捗管理 V3.0 [TEST]</title>
+    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
+        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
+        .screen { display: none; } .active { display: block; }
+        button { padding: 12px 18px; margin: 5px; font-size: 15px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
+        .btn-blue { background: #007bff; color: white; }
+        .btn-green { background: #28a745; color: white; }
+        .btn-gray { background: #6c757d; color: white; }
+        
+        /* 選択中のボタン用スタイル（アクティブ時：オレンジ色で強調） */
+        .btn-zoom { background: #6c757d; color: white; padding: 6px 14px; font-size: 13px; margin: 0 2px; }
+        .btn-zoom.active-zoom { background: #ff9800; color: white; }
 
+        .btn-main { width: 100%; padding: 18px; font-size: 18px; margin: 10px 0; display: block; }
+        #tehaiDisplay { font-size: 22px; font-weight: bold; margin-bottom: 15px; color: #333; background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #eee; }
+        #tehaiDisplay span { color: #007bff; margin-left: 10px; }
+        .select-slot { background: #fff; border: 2px solid #e0e0e0; padding: 10px 12px; margin: 6px 0; border-radius: 8px; text-align: left; font-size: 14px; }
+        .select-slot strong { color: #007bff; font-size: 16px; margin-left: 10px; }
+        .select-slot.active-slot { border-color: #007bff; background: #f0f7ff; }
+        .select-slot.disabled { background: #f9f9f9; color: #aaa; border-style: dashed; }
+        #button-container { background: #fdfdfd; border: 1px solid #eee; border-radius: 10px; padding: 10px; margin-top: 15px; min-height: 80px; }
+        #button-area { display: flex; flex-wrap: wrap; justify-content: center; }
+        #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; }
+        .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .test-badge { background: #ff9800; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+
+        /* カメラ映像のCSSズーム・拡大用スタイル */
+        #reader {
+            overflow: hidden;
+            position: relative;
+            border-radius: 8px;
+        }
+        #reader video {
+            transform: scale(var(--zoom-scale, 2.0));
+            transform-origin: center center;
+            transition: transform 0.2s ease-out;
+        }
+    </style>
+</head>
+<body>
+<div id="loading-overlay">
+    <div class="spinner"></div>
+    <p id="loading-text">処理中...</p>
+</div>
+<div class="card">
+    <div class="test-badge">【テスト環境】</div>
+    <div id="screenWait" class="screen active"><p>読み込み中...</p></div>
+    <div id="screenMain" class="screen">
+        <h2>加工進捗管理 (検証)</h2>
+        <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
+        <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
+        <button class="btn-gray" onclick="authAdmin()">管理者設定</button>
+    </div>
+    <!-- ズーム切替ボタン付きスキャン画面 -->
+    <div id="screenScanner" class="screen">
+        <h3 style="margin: 5px 0 10px 0;">スキャン中...</h3>
+        <div style="background: #e9ecef; padding: 8px; border-radius: 8px; margin-bottom: 10px;">
+            <span style="font-size: 13px; font-weight: bold; margin-right: 5px;">倍率切替:</span>
+            <button id="btnZoom1" class="btn-zoom" onclick="changeZoom(1.0)">1倍</button>
+            <button id="btnZoom2" class="btn-zoom active-zoom" onclick="changeZoom(2.0)">2倍</button>
+            <button id="btnZoom3" class="btn-zoom" onclick="changeZoom(3.0)">3倍</button>
+        </div>
+        <div id="reader" style="width: 100%;"></div>
+        <button class="btn-gray" onclick="resetToMain()" style="margin-top: 15px; width: 100%;">中止</button>
+    </div>
+    <div id="screenDetail" class="screen">
+        <div id="tehaiDisplay"></div>
+        <div id="slot-proc" class="select-slot">工程名: <strong id="val-proc">---</strong></div>
+        <div id="slot-staff" class="select-slot">作業者: <strong id="val-staff">---</strong></div>
+        <div id="slot-mac" class="select-slot">装置名: <strong id="val-mac">---</strong></div>
+        <div id="slot-cut" class="select-slot" style="display:none;">カット回数: <strong id="val-cut">---</strong></div>
+        <div id="slot-wire" class="select-slot" style="display:none;">線径: <strong id="val-wire">---</strong></div>
+
+        <div id="button-container"><div id="button-title"></div><div id="button-area"></div></div>
+        
+        <!-- やり直し用ボタンエリア -->
+        <div style="margin-top:20px; display: flex; gap: 8px; justify-content: center;">
+            <button class="btn-gray" onclick="restartSelection()" style="flex: 1; font-size: 14px; padding: 10px;">選択からやり直し</button>
+            <button class="btn-gray" onclick="resetToMain()" style="flex: 1; font-size: 14px; padding: 10px;">最初からやり直す</button>
+        </div>
+    </div>
+    <div id="screenAuth" class="screen"><h3>管理者認証</h3><input type="password" id="adminPwInput"><button class="btn-blue btn-main" onclick="checkPassword()">ログイン</button><button class="btn-gray" onclick="resetToMain()">戻る</button></div>
+    <div id="screenConfig" class="screen"><h3>端末詳細設定</h3><input type="text" id="inputDeviceName" placeholder="端末名"><div id="configList" style="margin:15px 0; text-align:left;"></div><button class="btn-green btn-main" onclick="saveConfig()">設定保存</button></div>
+</div>
+<script>
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbwUe_IeJYIBaAfJqa2-KNepwKESmkV--q_ana70xwh_big9OU3PAtkBj1R2dZymkI2E/exec";
+
+    let state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
+    let selectedCuts = []; 
+    let targetCutCount = 0; 
+
+    let masters = { processes: [], staffs: [], machines: [], htList: [], weCutList: [], weWireList: [], device: null };
+    let deviceId = localStorage.getItem('test_deviceId') || 'TEST-ID-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    localStorage.setItem('test_deviceId', deviceId);
+
+    let virtualDB = {
+        items: new Map(),
+        isLoaded: false
+    };
+
+    let html5QrCode = null;
+    let savedZoomLevel = 2.0;
+
+    function formatTime(dateObj) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const d = String(dateObj.getDate()).padStart(2, '0');
+        const h = String(dateObj.getHours()).padStart(2, '0');
+        const min = String(dateObj.getMinutes()).padStart(2, '0');
+        const s = String(dateObj.getSeconds()).padStart(2, '0');
+        const ms = String(dateObj.getMilliseconds()).padStart(3, '0');
+        return `${y}/${m}/${d} ${h}:${min}:${s}.${ms}`;
+    }
+
+    const AppLogger = {
+        logs: [],
+        timers: {},
+        startTimes: {},
+
+        start(stepKey) {
+            this.timers[stepKey] = performance.now();
+            this.startTimes[stepKey] = new Date();
+        },
+        end(stepKey, stepLabel) {
+            if (!this.timers[stepKey]) return;
+            const perfDuration = Math.round(performance.now() - this.timers[stepKey]);
+            const startTimeObj = this.startTimes[stepKey];
+            const endTimeObj = new Date();
+
+            this.logs.push({
+                type: `【${stepKey}】`,
+                step: stepLabel,
+                tehaiNo: state.tehai || "", 
+                startTime: formatTime(startTimeObj),
+                endTime: formatTime(endTimeObj),
+                durationMs: perfDuration,
+                deviceId: deviceId
+            });
+
+            delete this.timers[stepKey];
+            delete this.startTimes[stepKey];
+        },
+
+        async flush() {
+            // 【一時停止中：復活時はこのコメントを外して元のコードを有効化してください】
+            this.logs = []; 
+            /*
+            if (this.logs.length === 0) return;
+            try {
+                const dataToSend = JSON.stringify(this.logs);
+                this.logs = [];
+                await fetch(`${GAS_URL}?action=savePerformanceLog&logs=${encodeURIComponent(dataToSend)}`);
+            } catch(e) {
+                console.error("ログ送信失敗", e);
+            }
+            */
+        }
+    };
+
+    async function callGas(url) {
+        try {
+            const resp = await fetch(url);
+            return await resp.json();
+        } catch(e) {
+            return { success: false, message: "通信エラー" };
+        }
+    }
+
+    async function initVirtualDB(processName) {
+        if (!processName) return;
+        try {
+            const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
+            if (res && res.success && Array.isArray(res.data)) {
+                virtualDB.items.clear();
+                res.data.forEach(row => {
+                    const tehaiNo = String(row[0]).trim();
+                    if (tehaiNo) {
+                        virtualDB.items.set(tehaiNo, row);
+                    }
+                });
+                virtualDB.isLoaded = true;
+            }
+        } catch (err) {
+            console.error("【仮想DB】初期ロード失敗:", err);
+        }
+    }
+
+    function triggerBackgroundSync(processName) {
+        setTimeout(async () => {
+            if (!processName) return;
+            try {
+                const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
+                if (res && res.success && Array.isArray(res.data)) {
+                    virtualDB.items.clear();
+                    res.data.forEach(row => {
+                        const tehaiNo = String(row[0]).trim();
+                        if (tehaiNo) {
+                            virtualDB.items.set(tehaiNo, row);
+                        }
+                    });
+                    virtualDB.isLoaded = true;
+                }
+            } catch (err) {
+                console.error("【仮想DB】バックグラウンド同期エラー:", err);
+            }
+        }, 3000);
+    }
+
+    function changeZoom(zoomLevel) {
+        savedZoomLevel = zoomLevel;
+        document.documentElement.style.setProperty('--zoom-scale', zoomLevel);
+        
+        document.querySelectorAll('.btn-zoom').forEach(btn => btn.classList.remove('active-zoom'));
+        if (zoomLevel === 1.0) document.getElementById('btnZoom1').classList.add('active-zoom');
+        if (zoomLevel === 2.0) document.getElementById('btnZoom2').classList.add('active-zoom');
+        if (zoomLevel === 3.0) document.getElementById('btnZoom3').classList.add('active-zoom');
+    }
+
+    AppLogger.start("STEP1");
+
+    async function init() {
+        document.getElementById('loading-text').innerText = "データ読み込み中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+        
+        masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
+        
+        if (masters.device && masters.device.config) { 
+            const primaryProcess = masters.device.config.split(',')[0].trim();
+            await initVirtualDB(primaryProcess);
+
+            document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
+            document.getElementById('btnStartScan').style.display = "block"; 
+        }
+        
+        document.getElementById('loading-overlay').style.display = 'none';
+        showScreen('screenMain');
+        
+        AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
+    }
+
+    // スキャン開始
+    function startScan() {
+        showScreen('screenScanner');
+        changeZoom(savedZoomLevel);
+
+        try {
+            if (!html5QrCode) {
+                html5QrCode = new Html5Qrcode("reader");
+            }
+
+            const successCallback = (txt) => {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    html5QrCode.stop().then(() => {
+                        onScanSuccess(txt);
+                    }).catch(() => { onScanSuccess(txt); });
+                }
+            };
+
+            const config = { 
+                fps: 10, 
+                qrbox: 250 
+            };
+
+            // 【初期は安全にシンプル起動】
+            const constraints = { 
+                facingMode: "environment" 
+            };
+
+            html5QrCode.start(constraints, config, successCallback)
+                .then(() => {
+                    console.log("スキャン正常開始");
+
+                    // 【後から安全に適用】起動が完全に完了した後に、ビデオトラックへ直接フォーカスと高解像度を要求する
+                    setTimeout(async () => {
+                        try {
+                            const videoEl = document.querySelector("#reader video");
+                            if (videoEl && videoEl.srcObject) {
+                                const track = videoEl.srcObject.getVideoTracks()[0];
+                                if (track) {
+                                    // サポートされている機能を確認しながら安全に適用
+                                    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+                                    const constraintsToApply = {};
+
+                                    if (capabilities.width) constraintsToApply.width = { ideal: 1280 };
+                                    if (capabilities.height) constraintsToApply.height = { ideal: 720 };
+                                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                                        constraintsToApply.focusMode = 'continuous';
+                                    }
+
+                                    if (Object.keys(constraintsToApply).length > 0) {
+                                        await track.applyConstraints({ advanced: [constraintsToApply] });
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.log("フォーカス・解像度の追加適用スキップ（標準動作で継続）:", e);
+                        }
+                    }, 600); // 起動安定を少し待ってから実行
+                })
+                .catch(err => {
+                    alert("カメラの起動に失敗しました: " + err);
+                    resetToMain();
+                });
+        } catch (err) {
+            alert("カメラの起動に失敗しました: " + err);
+            resetToMain();
+        }
+    }
+
+    async function onScanSuccess(no) {
+        state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
+        selectedCuts = [];
+        targetCutCount = 0;
+        
+        AppLogger.end("STEP3", "スキャン開始できるようになって実際にスキャンできるまで");
+        AppLogger.start("STEP4");
+
+        document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
+        document.getElementById('button-area').innerHTML = "";
+        showScreen('screenDetail');
+
+        let res = null;
+
+        if (virtualDB.isLoaded) {
+            const targetNo = state.tehai;
+            const foundData = virtualDB.items.get(targetNo);
+
+            if (foundData) {
+                if (foundData[4] !== "" && foundData[4] != null) {
+                    res = { success: true, mode: "END", workData: foundData, process: foundData[1] };
+                } else {
+                    res = { success: false, mode: "ERROR", message: "開始時間が記録されていません" };
+                }
+            } else {
+                res = { success: true, mode: "START" };
+            }
+        } else {
+            document.getElementById('loading-text').innerText = "確認中...";
+            document.getElementById('loading-overlay').style.display = 'flex';
+            const procListParam = masters.device ? masters.device.config : "";
+            res = await callGas(`${GAS_URL}?action=checkStatus&tehaiNo=${encodeURIComponent(state.tehai)}&processList=${encodeURIComponent(procListParam)}`);
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+
+        AppLogger.end("STEP4", "作業開始/終了確認時間");
+
+        if (res.success && res.mode === "END") {
+            state.mode = "END";
+            state.proc = res.process;
+            state.staff = res.workData[2] || ''; 
+            state.mac = res.workData[3] || '';
+            state.cut1 = res.workData[8] || '';
+            state.cut2 = res.workData[9] || '';
+            state.cut3 = res.workData[10] || '';
+            state.wire = res.workData[11] || '';
+            
+            // 終了時：工程の種類に応じてスロットの表示状態を切り替える
+            const pUpper = state.proc.toUpperCase();
+            if (pUpper.includes("HT")) {
+                document.getElementById('slot-staff').innerHTML = 'HT項目: <strong id="val-staff">---</strong>';
+                document.getElementById('slot-mac').style.display = 'none';
+                document.getElementById('slot-cut').style.display = 'none';
+                document.getElementById('slot-wire').style.display = 'none';
+            } else if (pUpper === "WE1" || pUpper === "WE2") {
+                document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+                document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+                document.getElementById('slot-mac').style.display = 'block';
+                document.getElementById('slot-cut').style.display = 'block';
+                document.getElementById('slot-wire').style.display = 'block';
+            } else {
+                document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+                document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+                document.getElementById('slot-mac').style.display = 'block';
+                document.getElementById('slot-cut').style.display = 'none';
+                document.getElementById('slot-wire').style.display = 'none';
+            }
+
+            refreshSlots();
+            renderFinalConfirm("完了報告を送信しますか？");
+        } else if (res.success && res.mode === "START") {
+            state.mode = "START";
+            renderStartProcUI();
+        } else {
+            alert("エラー: " + (res.message || "対象データが見つかりません"));
+            resetToMain();
+        }
+    }
+
+    function renderStartProcUI() {
+        AppLogger.start("STEP5");
+        state.proc = ''; 
+        state.staff = ''; 
+        state.mac = '';
+        state.cut1 = '';
+        state.cut2 = '';
+        state.cut3 = '';
+        state.wire = '';
+        selectedCuts = [];
+        targetCutCount = 0;
+        
+        document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+        document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+        document.getElementById('slot-mac').style.display = 'block';
+        document.getElementById('slot-cut').style.display = 'none';
+        document.getElementById('slot-wire').style.display = 'none';
+        refreshSlots('proc');
+
+        const list = (masters.device?.config || "").split(',').map(p => p.trim()).filter(Boolean);
+        if (list.length === 1) { selectProc(list[0]); }
+        else {
+            document.getElementById('button-title').innerText = "工程選択";
+            document.getElementById('button-area').innerHTML = "";
+            list.forEach(p => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = p; b.onclick = () => selectProc(p); document.getElementById('button-area').appendChild(b); });
+        }
+    }
+
+    function selectProc(p) { 
+        state.proc = p; 
+        refreshSlots('proc'); 
+        
+        const pUpper = p.toUpperCase();
+        if (pUpper.includes("HT")) {
+            renderStartHtUI();
+        } else {
+            renderStartStaffUI(); // WE1, WE2も含めてまずは作業者選択へ進む
+        }
+    }
+
+    function renderStartHtUI() {
+        document.getElementById('slot-staff').innerHTML = 'HT項目: <strong id="val-staff">---</strong>';
+        document.getElementById('slot-mac').style.display = 'none';
+        document.getElementById('slot-cut').style.display = 'none';
+        document.getElementById('slot-wire').style.display = 'none';
+
+        state.staff = '';
+        state.mac = '';
+        state.cut1 = '';
+        state.cut2 = '';
+        state.cut3 = '';
+        state.wire = '';
+        refreshSlots('staff');
+
+        const list = masters.htList || [];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "HTリスト選択";
+        
+        if (list.length === 0) {
+            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_HTリスト（A列）にデータがありません</p>";
+            return;
+        }
+
+        list.forEach(item => { 
+            const b = document.createElement('button'); 
+            b.className = "btn-blue"; 
+            b.innerText = item; 
+            b.onclick = () => {
+                state.staff = item; 
+                state.mac = "";     
+                refreshSlots('staff');
+                
+                AppLogger.end("STEP5", "工程を選択開始し、HTリスト項目が選択された時間");
+                renderFinalConfirm("開始準備完了"); 
+            }; 
+            document.getElementById('button-area').appendChild(b); 
+        });
+    }
+
+    function renderStartStaffUI() {
+        document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+        document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+        document.getElementById('slot-mac').style.display = 'block';
+        document.getElementById('slot-cut').style.display = 'none';
+        document.getElementById('slot-wire').style.display = 'none';
+
+        state.staff = '';
+        state.mac = '';
+        state.cut1 = '';
+        state.cut2 = '';
+        state.cut3 = '';
+        state.wire = '';
+        refreshSlots('staff');
+
+        const list = masters.staffs.filter(r => String(r[0]).trim() === state.proc).map(r => String(r[1]).split(',')).flat().filter(Boolean);
+        if (list.length === 1) { selectStaff(list[0]); }
+        else {
+            document.getElementById('button-area').innerHTML = "";
+            document.getElementById('button-title').innerText = "作業者選択";
+            list.forEach(s => { const b = document.createElement('button'); b.className = "btn-green"; b.innerText = s; b.onclick = () => selectStaff(s); document.getElementById('button-area').appendChild(b); });
+        }
+    }
+
+    function selectStaff(s) { 
+        state.staff = s; 
+        refreshSlots('staff'); 
+        renderStartMacUI(); 
+    }
+
+    function renderStartMacUI() {
+        state.mac = '';
+        refreshSlots('mac');
+
+        const list = [...new Set(masters.machines.filter(r => String(r[0]).trim() === state.proc && String(r[1]).split(',').includes(state.staff)).map(r => String(r[2]).split(',')).flat())].filter(Boolean);
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "装置選択";
+        list.forEach(m => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = m; b.onclick = () => { 
+            state.mac = m; 
+            refreshSlots('mac'); 
+            
+            const pUpper = state.proc.toUpperCase();
+            if (pUpper === "WE1" || pUpper === "WE2") {
+                renderStartWeCutModeUI(); // 装置選択完了後、WE専用のカットモード選択（なし / 1カット / 2カット / 3カット）へ進む
+            } else {
+                AppLogger.end("STEP5", "工程を選択開始し、作業者、装置名が選択された時間");
+                renderFinalConfirm("開始準備完了"); 
+            }
+        }; document.getElementById('button-area').appendChild(b); });
+    }
+
+    // WE1/WE2用 Step1: 「なし」「1カット」「2カット」「3カット」の選択画面
+    function renderStartWeCutModeUI() {
+        document.getElementById('slot-cut').style.display = 'block';
+        selectedCuts = [];
+        targetCutCount = 0;
+        state.cut1 = '';
+        state.cut2 = '';
+        state.cut3 = '';
+        refreshSlots('cut');
+
+        const modes = [
+            { label: "なし", count: 0, color: "btn-gray" },
+            { label: "1カット", count: 1, color: "btn-blue" },
+            { label: "2カット", count: 2, color: "btn-blue" },
+            { label: "3カット", count: 3, color: "btn-blue" }
+        ];
+
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "カット回数（モード選択）";
+
+        modes.forEach(m => {
+            const b = document.createElement('button');
+            b.className = m.color;
+            b.innerText = m.label;
+            b.onclick = () => {
+                targetCutCount = m.count;
+                if (targetCutCount === 0) {
+                    // 「なし」が選ばれた場合：カット回数を「なし」として、即座に「線径選択」へスキップ
+                    state.cut1 = "なし";
+                    state.cut2 = "";
+                    state.cut3 = "";
+                    refreshSlots('cut');
+                    renderStartWeWireUI();
+                } else {
+                    // 1〜3カットが選ばれた場合：1回目の入力へ進む
+                    renderStartWeCutMasterUI(1);
+                }
+            };
+            document.getElementById('button-area').appendChild(b);
+        });
+    }
+
+    // WE1/WE2用 Step2: 各ステップ（1回目、2回目、3回目）のマスターデータ選択画面
+    function renderStartWeCutMasterUI(stepIndex) {
+        refreshSlots('cut');
+
+        const masterList = masters.weCutList || [];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = `【${stepIndex}回目】カット数選択 (${stepIndex}/${targetCutCount})`;
+
+        if (masterList.length === 0) {
+            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_WE（A列）にデータがありません</p>";
+            return;
+        }
+
+        masterList.forEach(val => {
+            const b = document.createElement('button');
+            b.className = "btn-blue";
+            b.innerText = val;
+            b.onclick = () => {
+                selectedCuts.push(val);
+                state.cut1 = selectedCuts[0] || '';
+                state.cut2 = selectedCuts[1] || '';
+                state.cut3 = selectedCuts[2] || '';
+                refreshSlots('cut');
+
+                if (stepIndex < targetCutCount) {
+                    // まだ次のカット選択が残っている場合
+                    renderStartWeCutMasterUI(stepIndex + 1);
+                } else {
+                    // 指定された回数分の入力が完了したら「線径選択」へ進む
+                    renderStartWeWireUI();
+                }
+            };
+            document.getElementById('button-area').appendChild(b);
+        });
+    }
+
+    // WE1/WE2用：線径選択UI
+    function renderStartWeWireUI() {
+        document.getElementById('slot-wire').style.display = 'block';
+        state.wire = '';
+        refreshSlots('wire');
+
+        const list = masters.weWireList || [];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "線径選択";
+
+        if (list.length === 0) {
+            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_WE（B列）にデータがありません</p>";
+            return;
+        }
+
+        list.forEach(wireVal => {
+            const b = document.createElement('button');
+            b.className = "btn-green";
+            b.innerText = wireVal;
+            b.onclick = () => {
+                state.wire = wireVal; 
+                refreshSlots('wire');
+
+                AppLogger.end("STEP5", "工程を選択開始し、作業者・装置・カット回数・線径が選択された時間");
+                renderFinalConfirm("開始準備完了");
+            };
+            document.getElementById('button-area').appendChild(b);
+        });
+    }
+
+    function renderFinalConfirm(msg) {
+        AppLogger.start("STEP6");
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = msg;
+        const b = document.createElement('button'); b.className = "btn-main btn-green"; b.innerText = "実行する";
+        b.onclick = () => {
+            AppLogger.end("STEP6", "開始準備完了から実行するを押すまで");
+            finalizeAction();
+        };
+        document.getElementById('button-area').appendChild(b);
+    }
+
+    function restartSelection() {
+        state.mode = "START";
+        renderStartProcUI();
+    }
+
+    async function finalizeAction() {
+        AppLogger.start("STEP7");
+        
+        document.getElementById('loading-text').innerText = "データ保存中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+        const devName = masters.device ? masters.device.name : "不明";
+        
+        const url = `${GAS_URL}?action=executeAction&tehaiNo=${encodeURIComponent(state.tehai)}` +
+                    `&process=${encodeURIComponent(state.proc)}` +
+                    `&staff=${encodeURIComponent(state.staff)}` +
+                    `&machine=${encodeURIComponent(state.mac)}` +
+                    `&cut1=${encodeURIComponent(state.cut1)}` +
+                    `&cut2=${encodeURIComponent(state.cut2)}` +
+                    `&cut3=${encodeURIComponent(state.cut3)}` +
+                    `&wire=${encodeURIComponent(state.wire)}` +
+                    `&deviceName=${encodeURIComponent(devName)}` +
+                    `&type=${state.mode === 'END' ? 'end' : 'start'}` +
+                    `&deviceId=${deviceId}`;
+                    
+        const res = await callGas(url);
+        
+        AppLogger.end("STEP7", "データ保存開始から成功しましたまで");
+
+        document.getElementById('loading-overlay').style.display = 'none';
+
+        if (res.success) {
+            if (state.mode === 'START') {
+                const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
+                virtualDB.items.set(state.tehai, newRow);
+            } else if (state.mode === 'END') {
+                virtualDB.items.delete(state.tehai);
+            }
+
+            alert("成功しました");
+            resetToMain();
+
+            triggerBackgroundSync(state.proc);
+        } else {
+            alert("失敗: " + res.message);
+        }
+
+        await AppLogger.flush();
+    }
+
+    function refreshSlots(k) { 
+        const displayCut = [state.cut1, state.cut2, state.cut3].filter(Boolean).join(', ') || "---";
+        document.getElementById('val-proc').innerText = state.proc || "---";
+        document.getElementById('val-staff').innerText = state.staff || "---";
+        document.getElementById('val-mac').innerText = state.mac || "---";
+        document.getElementById('val-cut').innerText = displayCut;
+        document.getElementById('val-wire').innerText = state.wire || "---";
+
+        ['proc', 'staff', 'mac', 'cut', 'wire'].forEach(id => {
+            const slotEl = document.getElementById('slot-'+id);
+            if (slotEl) {
+                const isSet = (id === 'cut') ? (state.cut1 || state.cut2 || state.cut3) : state[id];
+                slotEl.className = 'select-slot ' + (id === k ? 'active-slot' : (!isSet ? 'disabled' : '')); 
+            }
+        }); 
+    }
+
+    function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+    
+    async function resetToMain() { 
+        try {
+            if (html5QrCode && html5QrCode.isScanning) {
+                await html5QrCode.stop();
+            }
+        } catch(e) {}
+        
+        document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+        document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+        document.getElementById('slot-mac').style.display = 'block';
+        document.getElementById('slot-cut').style.display = 'none';
+        document.getElementById('slot-wire').style.display = 'none';
+
+        state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
+        selectedCuts = [];
+        targetCutCount = 0;
+        showScreen('screenMain'); 
+    }
+    
+    function authAdmin() { showScreen('screenAuth'); }
+    
+    async function checkPassword() {
+        const passwordInput = document.getElementById('adminPwInput');
+        const pwValue = passwordInput ? passwordInput.value : "";
+        
+        if (!pwValue) {
+            alert("パスワードが違います");
+            return;
+        }
+
+        const res = await callGas(GAS_URL + "?action=getAdminPassword");
+        
+        if (res && pwValue === String(res.password).trim()) {
+            showScreen('screenConfig');
+            const cur = (masters.device?.config || "").split(',');
+            const list = document.getElementById('configList'); 
+            list.innerHTML = "";
+            masters.processes.forEach(p => { 
+                const b = document.createElement('button'); 
+                b.innerText = p; 
+                b.className = cur.includes(p) ? "btn-blue" : "btn-gray"; 
+                b.onclick = () => b.className = b.className === "btn-blue" ? "btn-gray" : "btn-blue"; 
+                list.appendChild(b); 
+            });
+        } else {
+            alert("パスワードが違います");
+        }
+    }
+    
+    async function saveConfig() {
+        const sel = Array.from(document.querySelectorAll('#configList button')).filter(b => b.className === "btn-blue").map(b => b.innerText).join(',');
+        await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(document.getElementById('inputDeviceName').value)}&processList=${encodeURIComponent(sel)}`);
+        location.reload();
+    }
+    
+    window.onload = init;
+</script>
+</body>
+</html>
