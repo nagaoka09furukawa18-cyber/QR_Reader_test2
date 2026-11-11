@@ -152,16 +152,22 @@
         document.getElementById('loading-text').innerText = "データ読み込み中...";
         document.getElementById('loading-overlay').style.display = 'flex';
         
-        masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-        
-        if (masters.device && masters.device.config) { 
-            // 端末に設定されたすべての工程（カンマ区切り）を対象にする
-            const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
+        try {
+            masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
+            console.log("【デバッグ】取得したmasters:", masters);
+
+            // ★ここで本当にマスターが取れているか簡易アラートで確認（確認できたら後で消せます）
+            if (!masters || !masters.success) {
+                alert("マスター取得失敗: " + JSON.stringify(masters));
+            } else {
+                alert(`マスター取得成功！\n工程数: ${masters.processes?.length}\n端末設定: ${masters.device?.config}`);
+            }
             
-            // すべての担当工程のDBデータを並行して取得し、仮想DBに統合する
-            virtualDB.items.clear();
-            for (const procName of processes) {
-                try {
+            if (masters.device && masters.device.config) { 
+                const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
+                
+                virtualDB.items.clear();
+                for (const procName of processes) {
                     const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
                     if (res && res.success && Array.isArray(res.data)) {
                         res.data.forEach(row => {
@@ -171,14 +177,16 @@
                             }
                         });
                     }
-                } catch (e) {
-                    console.error(`【仮想DB】工程 "${procName}" のロード失敗:`, e);
                 }
-            }
-            virtualDB.isLoaded = true;
+                virtualDB.isLoaded = true;
 
-            document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
-            document.getElementById('btnStartScan').style.display = "block"; 
+                document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
+                document.getElementById('btnStartScan').style.display = "block"; 
+            } else {
+                alert("警告: この端末IDに担当工程（config）が設定されていません！端末設定を確認してください。");
+            }
+        } catch (err) {
+            alert("init() 実行時致命的エラー: " + err.toString());
         }
         
         document.getElementById('loading-overlay').style.display = 'none';
