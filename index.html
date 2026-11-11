@@ -166,7 +166,7 @@
           ・端末情報: ${JSON.stringify(masters.device)}
         `;
         console.log(debugInfo);
-        alert(debugInfo); // まずスマホ画面にポップアップで全容を表示させる
+        // alert(debugInfo); // まずスマホ画面にポップアップで全容を表示させる
 
         if (masters.device && masters.device.config) {  
             const primaryProcess = masters.device.config.split(',')[0].trim();
