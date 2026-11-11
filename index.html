@@ -14,10 +14,6 @@
         .btn-green { background: #28a745; color: white; }
         .btn-gray { background: #6c757d; color: white; }
         
-        /* 選択中のボタン用スタイル（アクティブ時：オレンジ色で強調） */
-        .btn-zoom { background: #6c757d; color: white; padding: 6px 14px; font-size: 13px; margin: 0 2px; }
-        .btn-zoom.active-zoom { background: #ff9800; color: white; }
-
         .btn-main { width: 100%; padding: 18px; font-size: 18px; margin: 10px 0; display: block; }
         #tehaiDisplay { font-size: 22px; font-weight: bold; margin-bottom: 15px; color: #333; background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #eee; }
         #tehaiDisplay span { color: #007bff; margin-left: 10px; }
@@ -31,18 +27,6 @@
         .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .test-badge { background: #ff9800; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
-
-        /* カメラ映像のCSSズーム・拡大用スタイル */
-        #reader {
-            overflow: hidden;
-            position: relative;
-            border-radius: 8px;
-        }
-        #reader video {
-            transform: scale(var(--zoom-scale, 2.0));
-            transform-origin: center center;
-            transition: transform 0.2s ease-out;
-        }
     </style>
 </head>
 <body>
@@ -53,26 +37,15 @@
 <div class="card">
     <div class="test-badge">【テスト環境】</div>
     <div id="screenWait" class="screen active"><p>読み込み中...</p></div>
+    
     <div id="screenMain" class="screen">
         <h2>加工進捗管理 (検証)</h2>
         <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
+        <!-- iOSショートカットを起動してスキャンを行うボタン -->
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
         <button class="btn-gray" onclick="authAdmin()">管理者設定</button>
     </div>
-    <div id="screenScanner" class="screen">
-    <h3 style="margin: 5px 0 10px 0;">スキャン中...</h3>
-    <div style="background: #e9ecef; padding: 8px; border-radius: 8px; margin-bottom: 10px;">
-        <span style="font-size: 13px; font-weight: bold; margin-right: 5px;">倍率切替:</span>
-        <button id="btnZoom1" class="btn-zoom" onclick="changeZoom(1.0)">1倍</button>
-        <button id="btnZoom2" class="btn-zoom active-zoom" onclick="changeZoom(2.0)">2倍</button>
-        <button id="btnZoom3" class="btn-zoom" onclick="changeZoom(3.0)">3倍</button>
-    </div>
-    <!-- 動画表示エリアとプレビュー用Canvas -->
-    <div id="reader" style="width: 100%; position: relative; background: #000; border-radius: 8px; overflow: hidden;">
-        <video id="scannerVideo" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover; transform: scale(var(--zoom-scale, 2.0)); transform-origin: center center; transition: transform 0.2s ease-out;"></video>
-    </div>
-    <button class="btn-gray" onclick="resetToMain()" style="margin-top: 15px; width: 100%;">中止</button>
-</div>
+
     <div id="screenDetail" class="screen">
         <div id="tehaiDisplay"></div>
         <div id="slot-proc" class="select-slot">工程名: <strong id="val-proc">---</strong></div>
@@ -83,15 +56,28 @@
 
         <div id="button-container"><div id="button-title"></div><div id="button-area"></div></div>
         
-        <!-- やり直し用ボタンエリア -->
         <div style="margin-top:20px; display: flex; gap: 8px; justify-content: center;">
             <button class="btn-gray" onclick="restartSelection()" style="flex: 1; font-size: 14px; padding: 10px;">選択からやり直し</button>
             <button class="btn-gray" onclick="resetToMain()" style="flex: 1; font-size: 14px; padding: 10px;">最初からやり直す</button>
         </div>
     </div>
-    <div id="screenAuth" class="screen"><h3>管理者認証</h3><input type="password" id="adminPwInput"><button class="btn-blue btn-main" onclick="checkPassword()">ログイン</button><button class="btn-gray" onclick="resetToMain()">戻る</button></div>
-    <div id="screenConfig" class="screen"><h3>端末詳細設定</h3><input type="text" id="inputDeviceName" placeholder="端末名"><div id="configList" style="margin:15px 0; text-align:left;"></div><button class="btn-green btn-main" onclick="saveConfig()">設定保存</button></div>
+
+    <div id="screenAuth" class="screen">
+        <h3>管理者認証</h3>
+        <input type="password" id="adminPwInput" style="padding: 10px; font-size: 16px; width: 80%; margin-bottom: 10px;">
+        <br>
+        <button class="btn-blue btn-main" onclick="checkPassword()">ログイン</button>
+        <button class="btn-gray" onclick="resetToMain()">戻る</button>
+    </div>
+
+    <div id="screenConfig" class="screen">
+        <h3>端末詳細設定</h3>
+        <input type="text" id="inputDeviceName" placeholder="端末名" style="padding: 10px; font-size: 16px; width: 80%;">
+        <div id="configList" style="margin:15px 0; text-align:left;"></div>
+        <button class="btn-green btn-main" onclick="saveConfig()">設定保存</button>
+    </div>
 </div>
+
 <script>
     const GAS_URL = "https://script.google.com/macros/s/AKfycbwUe_IeJYIBaAfJqa2-KNepwKESmkV--q_ana70xwh_big9OU3PAtkBj1R2dZymkI2E/exec";
 
@@ -108,10 +94,6 @@
         isLoaded: false
     };
 
-    let videoStream = null;
-let scanInterval = null;
-let savedZoomLevel = 2.0;
-
     function formatTime(dateObj) {
         const y = dateObj.getFullYear();
         const m = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -127,7 +109,6 @@ let savedZoomLevel = 2.0;
         logs: [],
         timers: {},
         startTimes: {},
-
         start(stepKey) {
             this.timers[stepKey] = performance.now();
             this.startTimes[stepKey] = new Date();
@@ -147,24 +128,11 @@ let savedZoomLevel = 2.0;
                 durationMs: perfDuration,
                 deviceId: deviceId
             });
-
             delete this.timers[stepKey];
             delete this.startTimes[stepKey];
         },
-
         async flush() {
-            // 【一時停止中：復活時はこのコメントを外して元のコードを有効化してください】
-            this.logs = []; 
-            /*
-            if (this.logs.length === 0) return;
-            try {
-                const dataToSend = JSON.stringify(this.logs);
-                this.logs = [];
-                await fetch(`${GAS_URL}?action=savePerformanceLog&logs=${encodeURIComponent(dataToSend)}`);
-            } catch(e) {
-                console.error("ログ送信失敗", e);
-            }
-            */
+            this.logs = [];
         }
     };
 
@@ -177,8 +145,37 @@ let savedZoomLevel = 2.0;
         }
     }
 
+    AppLogger.start("STEP1");
+
+    async function init() {
+        document.getElementById('loading-text').innerText = "データ読み込み中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+        
+        masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
+        
+        if (masters.device && masters.device.config) { 
+            const primaryProcess = masters.device.config.split(',')[0].trim();
+            await initVirtualDB(primaryProcess);
+
+            document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
+            document.getElementById('btnStartScan').style.display = "block"; 
+        }
+        
+        document.getElementById('loading-overlay').style.display = 'none';
+        showScreen('screenMain');
+
+        // URLパラメータに tehaiNo が含まれているかチェック（ショートカット連携用）
+        const urlParams = new URLSearchParams(window.location.search);
+        const passedTehaiNo = urlParams.get('tehaiNo');
+        if (passedTehaiNo) {
+            console.log("ショートカット経由の手配No検知:", passedTehaiNo);
+            onScanSuccess(passedTehaiNo);
+        }
+        
+        AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
+    }
+
     async function initVirtualDB(processName) {
-        if (!processName) return;
         try {
             const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
             if (res && res.success && Array.isArray(res.data)) {
@@ -191,8 +188,8 @@ let savedZoomLevel = 2.0;
                 });
                 virtualDB.isLoaded = true;
             }
-        } catch (err) {
-            console.error("【仮想DB】初期ロード失敗:", err);
+        } catch (e) {
+            console.error("【仮想DB】初期化エラー:", e);
         }
     }
 
@@ -217,132 +214,13 @@ let savedZoomLevel = 2.0;
         }, 3000);
     }
 
-    function changeZoom(zoomLevel) {
-        savedZoomLevel = zoomLevel;
-        document.documentElement.style.setProperty('--zoom-scale', zoomLevel);
-        
-        document.querySelectorAll('.btn-zoom').forEach(btn => btn.classList.remove('active-zoom'));
-        if (zoomLevel === 1.0) document.getElementById('btnZoom1').classList.add('active-zoom');
-        if (zoomLevel === 2.0) document.getElementById('btnZoom2').classList.add('active-zoom');
-        if (zoomLevel === 3.0) document.getElementById('btnZoom3').classList.add('active-zoom');
+    // 【新規】WebアプリのボタンからiOSショートカットを呼び出す処理
+    function startScan() {
+        const currentBaseUrl = window.location.origin + window.location.pathname;
+        const shortcutName = encodeURIComponent("加工スキャン");
+        // iOSショートカットアプリのURLスキーム実行
+        window.location.href = `shortcuts://run-shortcut?name=${shortcutName}&input=text&text=${encodeURIComponent(currentBaseUrl)}`;
     }
-
-    AppLogger.start("STEP1");
-
-    async function init() {
-        document.getElementById('loading-text').innerText = "データ読み込み中...";
-        document.getElementById('loading-overlay').style.display = 'flex';
-        
-        masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-        
-        if (masters.device && masters.device.config) { 
-            const primaryProcess = masters.device.config.split(',')[0].trim();
-            await initVirtualDB(primaryProcess);
-
-            document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
-            document.getElementById('btnStartScan').style.display = "block"; 
-        }
-        
-        document.getElementById('loading-overlay').style.display = 'none';
-        showScreen('screenMain');
-        
-        AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
-    }
-
-    // スキャン開始（BarcodeDetector API + ネイティブストリーム利用）
-async function startScan() {
-    showScreen('screenScanner');
-    changeZoom(savedZoomLevel);
-
-    // ブラウザが BarcodeDetector をサポートしているか確認
-    if (!('BarcodeDetector' in window)) {
-        alert("お使いのブラウザはネイティブQRスキャン（BarcodeDetector）をサポートしていません。");
-        resetToMain();
-        return;
-    }
-
-    try {
-        const videoEl = document.getElementById('scannerVideo');
-
-        // カメラストリームの取得（背面カメラ優先、高解像度・連続フォーカス要求）
-        videoStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: { exact: "environment" }, // 外カメラを強制
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                focusMode: 'continuous'
-            }
-        }).catch(async () => {
-            // exactで失敗した場合のフォールバック（一般的な環境カメラ指定）
-            return await navigator.mediaDevices.getUserMedia({
-                video: {
-                    facingMode: "environment",
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                }
-            });
-        });
-
-        videoEl.srcObject = videoStream;
-        await videoEl.play();
-
-        // さらに細かいトラック制約（フォーカス等）を適用
-        const track = videoStream.getVideoTracks()[0];
-        if (track && track.applyConstraints) {
-            const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-            const advanced = {};
-            if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                advanced.focusMode = 'continuous';
-            }
-            if (Object.keys(advanced).length > 0) {
-                await track.applyConstraints({ advanced: [advanced] }).catch(() => {});
-            }
-        }
-
-        // BarcodeDetector のインスタンス生成（QRコードに特化）
-        const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
-
-        // 毎フレーム（約100msごと）に映像からQRコードを検出
-        if (scanInterval) clearInterval(scanInterval);
-        scanInterval = setInterval(async () => {
-            if (videoEl.readyState >= videoEl.HAVE_CURRENT_DATA) {
-                try {
-                    const barcodes = await barcodeDetector.detect(videoEl);
-                    if (barcodes.length > 0) {
-                        const scannedText = barcodes[0].rawValue;
-                        if (scannedText) {
-                            // スキャン成功時の処理
-                            stopCamera();
-                            onScanSuccess(scannedText);
-                        }
-                    }
-                } catch (err) {
-                    // 検出中のフレームエラーは無視して継続
-                }
-            }
-        }, 100);
-
-    } catch (err) {
-        alert("カメラの起動または権限取得に失敗しました: " + err);
-        resetToMain();
-    }
-}
-
-// カメラの停止処理
-function stopCamera() {
-    if (scanInterval) {
-        clearInterval(scanInterval);
-        scanInterval = null;
-    }
-    if (videoStream) {
-        videoStream.getTracks().forEach(track => track.stop());
-        videoStream = null;
-    }
-    const videoEl = document.getElementById('scannerVideo');
-    if (videoEl) {
-        videoEl.srcObject = null;
-    }
-}
 
     async function onScanSuccess(no) {
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
@@ -391,7 +269,6 @@ function stopCamera() {
             state.cut3 = res.workData[10] || '';
             state.wire = res.workData[11] || '';
             
-            // 終了時：工程の種類に応じてスロットの表示状態を切り替える
             const pUpper = state.proc.toUpperCase();
             if (pUpper.includes("HT")) {
                 document.getElementById('slot-staff').innerHTML = 'HT項目: <strong id="val-staff">---</strong>';
@@ -459,7 +336,7 @@ function stopCamera() {
         if (pUpper.includes("HT")) {
             renderStartHtUI();
         } else {
-            renderStartStaffUI(); // WE1, WE2も含めてまずは作業者選択へ進む
+            renderStartStaffUI();
         }
     }
 
@@ -482,7 +359,7 @@ function stopCamera() {
         document.getElementById('button-title').innerText = "HTリスト選択";
         
         if (list.length === 0) {
-            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_HTリスト（A列）にデータがありません</p>";
+            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_HTリストにデータがありません</p>";
             return;
         }
 
@@ -494,8 +371,7 @@ function stopCamera() {
                 state.staff = item; 
                 state.mac = "";     
                 refreshSlots('staff');
-                
-                AppLogger.end("STEP5", "工程を選択開始し、HTリスト項目が選択された時間");
+                AppLogger.end("STEP5", "工程選択からHTリスト項目選択まで");
                 renderFinalConfirm("開始準備完了"); 
             }; 
             document.getElementById('button-area').appendChild(b); 
@@ -545,15 +421,14 @@ function stopCamera() {
             
             const pUpper = state.proc.toUpperCase();
             if (pUpper === "WE1" || pUpper === "WE2") {
-                renderStartWeCutModeUI(); // 装置選択完了後、WE専用のカットモード選択（なし / 1カット / 2カット / 3カット）へ進む
+                renderStartWeCutModeUI();
             } else {
-                AppLogger.end("STEP5", "工程を選択開始し、作業者、装置名が選択された時間");
+                AppLogger.end("STEP5", "工程・作業者・装置選択完了");
                 renderFinalConfirm("開始準備完了"); 
             }
         }; document.getElementById('button-area').appendChild(b); });
     }
 
-    // WE1/WE2用 Step1: 「なし」「1カット」「2カット」「3カット」の選択画面
     function renderStartWeCutModeUI() {
         document.getElementById('slot-cut').style.display = 'block';
         selectedCuts = [];
@@ -580,14 +455,12 @@ function stopCamera() {
             b.onclick = () => {
                 targetCutCount = m.count;
                 if (targetCutCount === 0) {
-                    // 「なし」が選ばれた場合：カット回数を「なし」として、即座に「線径選択」へスキップ
                     state.cut1 = "なし";
                     state.cut2 = "";
                     state.cut3 = "";
                     refreshSlots('cut');
                     renderStartWeWireUI();
                 } else {
-                    // 1〜3カットが選ばれた場合：1回目の入力へ進む
                     renderStartWeCutMasterUI(1);
                 }
             };
@@ -595,18 +468,11 @@ function stopCamera() {
         });
     }
 
-    // WE1/WE2用 Step2: 各ステップ（1回目、2回目、3回目）のマスターデータ選択画面
     function renderStartWeCutMasterUI(stepIndex) {
         refreshSlots('cut');
-
         const masterList = masters.weCutList || [];
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = `【${stepIndex}回目】カット数選択 (${stepIndex}/${targetCutCount})`;
-
-        if (masterList.length === 0) {
-            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_WE（A列）にデータがありません</p>";
-            return;
-        }
 
         masterList.forEach(val => {
             const b = document.createElement('button');
@@ -620,10 +486,8 @@ function stopCamera() {
                 refreshSlots('cut');
 
                 if (stepIndex < targetCutCount) {
-                    // まだ次のカット選択が残っている場合
                     renderStartWeCutMasterUI(stepIndex + 1);
                 } else {
-                    // 指定された回数分の入力が完了したら「線径選択」へ進む
                     renderStartWeWireUI();
                 }
             };
@@ -631,7 +495,6 @@ function stopCamera() {
         });
     }
 
-    // WE1/WE2用：線径選択UI
     function renderStartWeWireUI() {
         document.getElementById('slot-wire').style.display = 'block';
         state.wire = '';
@@ -641,11 +504,6 @@ function stopCamera() {
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = "線径選択";
 
-        if (list.length === 0) {
-            document.getElementById('button-area').innerHTML = "<p style='color:red;'>M_WE（B列）にデータがありません</p>";
-            return;
-        }
-
         list.forEach(wireVal => {
             const b = document.createElement('button');
             b.className = "btn-green";
@@ -653,8 +511,7 @@ function stopCamera() {
             b.onclick = () => {
                 state.wire = wireVal; 
                 refreshSlots('wire');
-
-                AppLogger.end("STEP5", "工程を選択開始し、作業者・装置・カット回数・線径が選択された時間");
+                AppLogger.end("STEP5", "開始準備完了");
                 renderFinalConfirm("開始準備完了");
             };
             document.getElementById('button-area').appendChild(b);
@@ -667,7 +524,7 @@ function stopCamera() {
         document.getElementById('button-title').innerText = msg;
         const b = document.createElement('button'); b.className = "btn-main btn-green"; b.innerText = "実行する";
         b.onclick = () => {
-            AppLogger.end("STEP6", "開始準備完了から実行するを押すまで");
+            AppLogger.end("STEP6", "実行ボタン押下");
             finalizeAction();
         };
         document.getElementById('button-area').appendChild(b);
@@ -680,7 +537,6 @@ function stopCamera() {
 
     async function finalizeAction() {
         AppLogger.start("STEP7");
-        
         document.getElementById('loading-text').innerText = "データ保存中...";
         document.getElementById('loading-overlay').style.display = 'flex';
         const devName = masters.device ? masters.device.name : "不明";
@@ -698,9 +554,7 @@ function stopCamera() {
                     `&deviceId=${deviceId}`;
                     
         const res = await callGas(url);
-        
-        AppLogger.end("STEP7", "データ保存開始から成功しましたまで");
-
+        AppLogger.end("STEP7", "データ保存完了");
         document.getElementById('loading-overlay').style.display = 'none';
 
         if (res.success) {
@@ -710,15 +564,12 @@ function stopCamera() {
             } else if (state.mode === 'END') {
                 virtualDB.items.delete(state.tehai);
             }
-
             alert("成功しました");
             resetToMain();
-
             triggerBackgroundSync(state.proc);
         } else {
             alert("失敗: " + res.message);
         }
-
         await AppLogger.flush();
     }
 
@@ -739,36 +590,26 @@ function stopCamera() {
         }); 
     }
 
-    function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+    function showScreen(id) { 
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); 
+        document.getElementById(id).classList.add('active'); 
+    }
     
     async function resetToMain() { 
-    stopCamera(); // ネイティブカメラストリームを確実に停止
-
-    document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
-    document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
-    document.getElementById('slot-mac').style.display = 'block';
-    document.getElementById('slot-cut').style.display = 'none';
-    document.getElementById('slot-wire').style.display = 'none';
-
-    state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
-    selectedCuts = [];
-    targetCutCount = 0;
-    showScreen('screenMain'); 
-}
+        state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
+        selectedCuts = [];
+        targetCutCount = 0;
+        showScreen('screenMain'); 
+    }
     
     function authAdmin() { showScreen('screenAuth'); }
     
     async function checkPassword() {
         const passwordInput = document.getElementById('adminPwInput');
         const pwValue = passwordInput ? passwordInput.value : "";
-        
-        if (!pwValue) {
-            alert("パスワードが違います");
-            return;
-        }
+        if (!pwValue) { alert("パスワードが違います"); return; }
 
         const res = await callGas(GAS_URL + "?action=getAdminPassword");
-        
         if (res && pwValue === String(res.password).trim()) {
             showScreen('screenConfig');
             const cur = (masters.device?.config || "").split(',');
