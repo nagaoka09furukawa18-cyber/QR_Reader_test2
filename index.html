@@ -155,12 +155,12 @@
         masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         
         if (masters.device && masters.device.config) { 
-            // ▼ configに含まれるすべての工程（例: "FG1, FG2"）を配列にする
+            // 端末設定（例: "FG1, FG2"）からすべての担当工程を抽出する
             const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
             
             virtualDB.items.clear();
             
-            // ▼ すべての担当工程の加工進捗管理DBをループして一括ロードし、ひとつのMapに統合する
+            // すべての担当工程の加工進捗管理DBを一括ロードしてメモリマップに統合
             for (const procName of processes) {
                 try {
                     const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
@@ -184,6 +184,14 @@
         
         document.getElementById('loading-overlay').style.display = 'none';
         showScreen('screenMain');
+
+        // iOSショートカット経由でQR読み取り後、Webアプリに戻ってきた際に手配Noを自動処理する
+        const urlParams = new URLSearchParams(window.location.search);
+        const scannedNo = urlParams.get('no') || urlParams.get('text'); 
+        if (scannedNo) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+            onScanSuccess(scannedNo); // サーバー通信なし・メモリマップだけで0秒判定
+        }
         
         AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
     }
