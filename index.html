@@ -187,6 +187,7 @@
         
         AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
     }
+    
     async function initVirtualDB(processName) {
         try {
             const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
