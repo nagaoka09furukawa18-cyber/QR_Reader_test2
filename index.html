@@ -154,14 +154,13 @@
         
         masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         
-        // ★ここに確認用ログを仕込む
-        console.log("【マスター全データ確認】", masters);
-        alert(`取得マスター確認:\n工程数: ${masters.processes?.length || 0}\n作業者数: ${masters.staffs?.length || 0}\n装置数: ${masters.machines?.length || 0}\n端末config: ${masters.device?.config || 'なし'}`);
-
         if (masters.device && masters.device.config) { 
+            // ▼ configに含まれるすべての工程（例: "FG1, FG2"）を配列にする
             const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
             
             virtualDB.items.clear();
+            
+            // ▼ すべての担当工程の加工進捗管理DBをループして一括ロードし、ひとつのMapに統合する
             for (const procName of processes) {
                 try {
                     const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
