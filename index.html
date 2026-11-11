@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>加工進捗管理 V3.0 [TEST]</title>
-    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
@@ -59,18 +59,20 @@
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
         <button class="btn-gray" onclick="authAdmin()">管理者設定</button>
     </div>
-    <!-- ズーム切替ボタン付きスキャン画面 -->
     <div id="screenScanner" class="screen">
-        <h3 style="margin: 5px 0 10px 0;">スキャン中...</h3>
-        <div style="background: #e9ecef; padding: 8px; border-radius: 8px; margin-bottom: 10px;">
-            <span style="font-size: 13px; font-weight: bold; margin-right: 5px;">倍率切替:</span>
-            <button id="btnZoom1" class="btn-zoom" onclick="changeZoom(1.0)">1倍</button>
-            <button id="btnZoom2" class="btn-zoom active-zoom" onclick="changeZoom(2.0)">2倍</button>
-            <button id="btnZoom3" class="btn-zoom" onclick="changeZoom(3.0)">3倍</button>
-        </div>
-        <div id="reader" style="width: 100%;"></div>
-        <button class="btn-gray" onclick="resetToMain()" style="margin-top: 15px; width: 100%;">中止</button>
+    <h3 style="margin: 5px 0 10px 0;">スキャン中...</h3>
+    <div style="background: #e9ecef; padding: 8px; border-radius: 8px; margin-bottom: 10px;">
+        <span style="font-size: 13px; font-weight: bold; margin-right: 5px;">倍率切替:</span>
+        <button id="btnZoom1" class="btn-zoom" onclick="changeZoom(1.0)">1倍</button>
+        <button id="btnZoom2" class="btn-zoom active-zoom" onclick="changeZoom(2.0)">2倍</button>
+        <button id="btnZoom3" class="btn-zoom" onclick="changeZoom(3.0)">3倍</button>
     </div>
+    <!-- 動画表示エリアとプレビュー用Canvas -->
+    <div id="reader" style="width: 100%; position: relative; background: #000; border-radius: 8px; overflow: hidden;">
+        <video id="scannerVideo" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover; transform: scale(var(--zoom-scale, 2.0)); transform-origin: center center; transition: transform 0.2s ease-out;"></video>
+    </div>
+    <button class="btn-gray" onclick="resetToMain()" style="margin-top: 15px; width: 100%;">中止</button>
+</div>
     <div id="screenDetail" class="screen">
         <div id="tehaiDisplay"></div>
         <div id="slot-proc" class="select-slot">工程名: <strong id="val-proc">---</strong></div>
@@ -106,8 +108,9 @@
         isLoaded: false
     };
 
-    let html5QrCode = null;
-    let savedZoomLevel = 2.0;
+    let videoStream = null;
+let scanInterval = null;
+let savedZoomLevel = 2.0;
 
     function formatTime(dateObj) {
         const y = dateObj.getFullYear();
@@ -246,74 +249,100 @@
         AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
     }
 
-    // スキャン開始
-    function startScan() {
-        showScreen('screenScanner');
-        changeZoom(savedZoomLevel);
+    // スキャン開始（BarcodeDetector API + ネイティブストリーム利用）
+async function startScan() {
+    showScreen('screenScanner');
+    changeZoom(savedZoomLevel);
 
-        try {
-            if (!html5QrCode) {
-                html5QrCode = new Html5Qrcode("reader");
-            }
-
-            const successCallback = (txt) => {
-                if (html5QrCode && html5QrCode.isScanning) {
-                    html5QrCode.stop().then(() => {
-                        onScanSuccess(txt);
-                    }).catch(() => { onScanSuccess(txt); });
-                }
-            };
-
-            const config = { 
-                fps: 10, 
-                qrbox: 250 
-            };
-
-            // 【初期は安全にシンプル起動】
-            const constraints = { 
-                facingMode: "environment" 
-            };
-
-            html5QrCode.start(constraints, config, successCallback)
-                .then(() => {
-                    console.log("スキャン正常開始");
-
-                    // 【後から安全に適用】起動が完全に完了した後に、ビデオトラックへ直接フォーカスと高解像度を要求する
-                    setTimeout(async () => {
-                        try {
-                            const videoEl = document.querySelector("#reader video");
-                            if (videoEl && videoEl.srcObject) {
-                                const track = videoEl.srcObject.getVideoTracks()[0];
-                                if (track) {
-                                    // サポートされている機能を確認しながら安全に適用
-                                    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-                                    const constraintsToApply = {};
-
-                                    if (capabilities.width) constraintsToApply.width = { ideal: 1280 };
-                                    if (capabilities.height) constraintsToApply.height = { ideal: 720 };
-                                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                                        constraintsToApply.focusMode = 'continuous';
-                                    }
-
-                                    if (Object.keys(constraintsToApply).length > 0) {
-                                        await track.applyConstraints({ advanced: [constraintsToApply] });
-                                    }
-                                }
-                            }
-                        } catch (e) {
-                            console.log("フォーカス・解像度の追加適用スキップ（標準動作で継続）:", e);
-                        }
-                    }, 600); // 起動安定を少し待ってから実行
-                })
-                .catch(err => {
-                    alert("カメラの起動に失敗しました: " + err);
-                    resetToMain();
-                });
-        } catch (err) {
-            alert("カメラの起動に失敗しました: " + err);
-            resetToMain();
-        }
+    // ブラウザが BarcodeDetector をサポートしているか確認
+    if (!('BarcodeDetector' in window)) {
+        alert("お使いのブラウザはネイティブQRスキャン（BarcodeDetector）をサポートしていません。");
+        resetToMain();
+        return;
     }
+
+    try {
+        const videoEl = document.getElementById('scannerVideo');
+
+        // カメラストリームの取得（背面カメラ優先、高解像度・連続フォーカス要求）
+        videoStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: { exact: "environment" }, // 外カメラを強制
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                focusMode: 'continuous'
+            }
+        }).catch(async () => {
+            // exactで失敗した場合のフォールバック（一般的な環境カメラ指定）
+            return await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: "environment",
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            });
+        });
+
+        videoEl.srcObject = videoStream;
+        await videoEl.play();
+
+        // さらに細かいトラック制約（フォーカス等）を適用
+        const track = videoStream.getVideoTracks()[0];
+        if (track && track.applyConstraints) {
+            const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+            const advanced = {};
+            if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                advanced.focusMode = 'continuous';
+            }
+            if (Object.keys(advanced).length > 0) {
+                await track.applyConstraints({ advanced: [advanced] }).catch(() => {});
+            }
+        }
+
+        // BarcodeDetector のインスタンス生成（QRコードに特化）
+        const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+
+        // 毎フレーム（約100msごと）に映像からQRコードを検出
+        if (scanInterval) clearInterval(scanInterval);
+        scanInterval = setInterval(async () => {
+            if (videoEl.readyState >= videoEl.HAVE_CURRENT_DATA) {
+                try {
+                    const barcodes = await barcodeDetector.detect(videoEl);
+                    if (barcodes.length > 0) {
+                        const scannedText = barcodes[0].rawValue;
+                        if (scannedText) {
+                            // スキャン成功時の処理
+                            stopCamera();
+                            onScanSuccess(scannedText);
+                        }
+                    }
+                } catch (err) {
+                    // 検出中のフレームエラーは無視して継続
+                }
+            }
+        }, 100);
+
+    } catch (err) {
+        alert("カメラの起動または権限取得に失敗しました: " + err);
+        resetToMain();
+    }
+}
+
+// カメラの停止処理
+function stopCamera() {
+    if (scanInterval) {
+        clearInterval(scanInterval);
+        scanInterval = null;
+    }
+    if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
+        videoStream = null;
+    }
+    const videoEl = document.getElementById('scannerVideo');
+    if (videoEl) {
+        videoEl.srcObject = null;
+    }
+}
 
     async function onScanSuccess(no) {
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
@@ -713,23 +742,19 @@
     function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
     
     async function resetToMain() { 
-        try {
-            if (html5QrCode && html5QrCode.isScanning) {
-                await html5QrCode.stop();
-            }
-        } catch(e) {}
-        
-        document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
-        document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
-        document.getElementById('slot-mac').style.display = 'block';
-        document.getElementById('slot-cut').style.display = 'none';
-        document.getElementById('slot-wire').style.display = 'none';
+    stopCamera(); // ネイティブカメラストリームを確実に停止
 
-        state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
-        selectedCuts = [];
-        targetCutCount = 0;
-        showScreen('screenMain'); 
-    }
+    document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+    document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+    document.getElementById('slot-mac').style.display = 'block';
+    document.getElementById('slot-cut').style.display = 'none';
+    document.getElementById('slot-wire').style.display = 'none';
+
+    state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
+    selectedCuts = [];
+    targetCutCount = 0;
+    showScreen('screenMain'); 
+}
     
     function authAdmin() { showScreen('screenAuth'); }
     
