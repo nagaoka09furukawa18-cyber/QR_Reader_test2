@@ -154,7 +154,21 @@
         
         masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         
-        if (masters.device && masters.device.config) { 
+        document.getElementById('loading-overlay').style.display = 'none';
+        
+        // ★ ここでGASから返ってきた全データを画面にそのまま文字として表示して確認する
+        const debugInfo = `
+          【取得確認】
+          ・プロセス数: ${masters.processes ? masters.processes.length : 0}
+          ・工程リスト: ${JSON.stringify(masters.processes)}
+          ・作業者数: ${masters.staffs ? masters.staffs.length : 0}
+          ・装置数: ${masters.machines ? masters.machines.length : 0}
+          ・端末情報: ${JSON.stringify(masters.device)}
+        `;
+        console.log(debugInfo);
+        alert(debugInfo); // まずスマホ画面にポップアップで全容を表示させる
+
+        if (masters.device && masters.device.config) {  
             const primaryProcess = masters.device.config.split(',')[0].trim();
             await initVirtualDB(primaryProcess);
 
@@ -162,20 +176,14 @@
             document.getElementById('btnStartScan').style.display = "block"; 
         }
         
-        document.getElementById('loading-overlay').style.display = 'none';
         showScreen('screenMain');
 
-        // URLパラメータに tehaiNo が含まれているかチェック（ショートカット連携用）
         const urlParams = new URLSearchParams(window.location.search);
         const passedTehaiNo = urlParams.get('tehaiNo');
         if (passedTehaiNo) {
-            console.log("ショートカット経由の手配No検知:", passedTehaiNo);
             onScanSuccess(passedTehaiNo);
         }
-        
-        AppLogger.end("STEP1", "アプリ立ち上げから操作可能になるまで");
     }
-
     async function initVirtualDB(processName) {
         try {
             const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
