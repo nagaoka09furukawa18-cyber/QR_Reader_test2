@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V3.0 [DEBUG]</title>
+    <title>加工進捗管理 V4.0 [爆速非同期アーキテクチャ]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -25,9 +25,8 @@
         #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .test-badge { background: #ff9800; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+        .test-badge { background: #28a745; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
         
-        /* デバッグモニター用スタイル */
         #debug-monitor {
             margin-top: 20px;
             background: #222;
@@ -37,7 +36,7 @@
             text-align: left;
             padding: 10px;
             border-radius: 8px;
-            max-height: 150px;
+            max-height: 120px;
             overflow-y: auto;
             word-break: break-all;
         }
@@ -49,11 +48,11 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【デバッグ環境】</div>
-    <div id="screenWait" class="screen active"><p>読み込み中...</p></div>
+    <div class="test-badge">【爆速非同期版 V4.0】</div>
+    <div id="screenWait" class="screen active"><p>高速起動中...</p></div>
     
     <div id="screenMain" class="screen">
-        <h2>加工進捗管理 (検証)</h2>
+        <h2>加工進捗管理</h2>
         <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
         <button class="btn-gray" onclick="authAdmin()">管理者設定</button>
@@ -89,8 +88,7 @@
         <button class="btn-green btn-main" onclick="saveConfig()">設定保存</button>
     </div>
 
-    <!-- リアルタイムデバッグモニター -->
-    <div id="debug-monitor">[System] デバッグモニター起動...</div>
+    <div id="debug-monitor">[System] モニター起動...</div>
 </div>
 
 <script>
@@ -100,10 +98,11 @@
     let selectedCuts = []; 
     let targetCutCount = 0; 
 
-    let masters = { processes: [], staffs: [], machines: [], htList: [], weCutList: [], weWireList: [], device: null };
+    let masters = { processes: [], staffs: [], machines: [], htList: [], weCutList: [], weWireList: [], device: null, version: '' };
     let deviceId = localStorage.getItem('test_deviceId') || 'TEST-ID-' + Math.random().toString(36).substring(2, 8).toUpperCase();
     localStorage.setItem('test_deviceId', deviceId);
 
+    // スマホ側メモリの仮想DB
     let virtualDB = {
         items: new Map(),
         isLoaded: false
@@ -136,65 +135,118 @@
         }
     }
 
+    // ==========================================
+    // 1. 【超高速起動】DB読み込みを一切行わず、1秒で画面を構築
+    // ==========================================
     async function init() {
-        logDebug("▶ [init] ページ初期化・マスター/仮想DBロード開始 (リロードされた可能性あり)");
-        document.getElementById('loading-text').innerText = "データ読み込み中...";
-        document.getElementById('loading-overlay').style.display = 'flex';
+        logDebug("⚡ [init] 高速イニシャライズ開始（DB読込なし）");
         
-        masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-        
-        if (masters.device && masters.device.config) { 
-            const processes = masters.device.config.split(',').map(p => p.trim()).filter(Boolean);
-            logDebug(`ℹ 対象工程一覧: ${processes.join(', ')}`);
-            
-            virtualDB.items.clear();
-            
-            for (const procName of processes) {
-                try {
-                    const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
-                    if (res && res.success && Array.isArray(res.data)) {
-                        res.data.forEach(row => {
-                            const tehaiNo = String(row[0]).trim();
-                            if (tehaiNo) {
-                                virtualDB.items.set(tehaiNo, row);
-                            }
-                        });
-                        logDebug(`✔ 工程 [${procName}] のアクティブデータ ${res.data.length}件をキャッシュ`);
-                    }
-                } catch (e) {
-                    logDebug(`❌ 工程 "${procName}" のロード失敗: ${e}`);
-                }
-            }
-            virtualDB.isLoaded = true;
-            logDebug(`✔ 仮想DBロード完了 (総キャッシュ件数: ${virtualDB.items.size}件)`);
+        let isCacheValid = false;
+        try {
+            const cachedVersion = localStorage.getItem('cache_version');
+            const cachedMasters = localStorage.getItem('cache_masters');
 
-            document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
-            document.getElementById('btnStartScan').style.display = "block"; 
-        } else {
-            logDebug("⚠ 端末configが取得できませんでした");
+            if (cachedMasters && cachedVersion) {
+                masters = JSON.parse(cachedMasters);
+                isCacheValid = true;
+                logDebug("✔ ローカルマスターキャッシュを即時適用");
+            }
+        } catch (e) {
+            logDebug("⚠ キャッシュ読込エラー: " + e);
         }
-        
-        document.getElementById('loading-overlay').style.display = 'none';
+
+        // キャッシュがない場合のみ、マスターを軽快に取得
+        if (!isCacheValid) {
+            logDebug("ℹ キャッシュなし：マスター取得中...");
+            masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
+            if (masters && masters.device) {
+                localStorage.setItem('cache_masters', JSON.stringify(masters));
+                if (masters.version) localStorage.setItem('cache_version', masters.version);
+            }
+        } else {
+            // バックグラウンドでマスターのバージョン（タイムスタンプ等）だけ軽量確認し、更新があればサイレント同期
+            callGas(GAS_URL + "?action=getMastersVersion").then(verRes => {
+                if (verRes && verRes.version && String(verRes.version) !== String(masters.version)) {
+                    logDebug("ℹ マスター更新を検知：バックグラウンドで再取得します");
+                    callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId).then(fresh => {
+                        if (fresh && fresh.device) {
+                            masters = fresh;
+                            localStorage.setItem('cache_masters', JSON.stringify(masters));
+                            if (fresh.version) localStorage.setItem('cache_version', fresh.version);
+                            updateMainStationUI();
+                        }
+                    });
+                }
+            });
+        }
+
+        updateMainStationUI();
         showScreen('screenMain');
 
-        // URLパラメータの確認
+        // URLパラメータ（手配No）の確認
         const urlParams = new URLSearchParams(window.location.search);
         const scannedNo = urlParams.get('no') || urlParams.get('text'); 
-        logDebug(`ℹ URLパラメータ(no/text): ${scannedNo || 'なし'}`);
-
+        
         if (scannedNo) {
             window.history.replaceState({}, document.title, window.location.pathname);
             onScanSuccess(scannedNo);
         }
     }
 
+    function updateMainStationUI() {
+        if (masters.device) {
+            document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
+            document.getElementById('btnStartScan').style.display = "block"; 
+        } else {
+            document.getElementById('currentStation').innerText = "端末設定が見つかりません（管理者設定より登録してください）";
+        }
+    }
+
+    // ==========================================
+    // 2. 【非同期裏読み込み】スキャン後、人間が選択している隙にDB取得
+    // ==========================================
+    async function preloadActiveDataForCurrentDevice() {
+        if (virtualDB.isLoaded) return; // 既にロード済みならスキップ
+        
+        const configStr = masters.device?.config || "";
+        const processes = configStr.split(',').map(p => p.trim()).filter(Boolean);
+        if (processes.length === 0) return;
+
+        logDebug("🔄 [裏読み込み開始] 作業者の選択操作の裏でアクティブデータを取得中...");
+        let tempMap = new Map();
+
+        for (const procName of processes) {
+            try {
+                const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(procName)}`);
+                if (res && res.success && Array.isArray(res.data)) {
+                    res.data.forEach(row => {
+                        const tehaiNo = String(row[0]).trim();
+                        if (tehaiNo) tempMap.set(tehaiNo, row);
+                    });
+                }
+            } catch (e) {
+                logDebug(`❌ 工程 "${procName}" の裏読み込み失敗: ${e}`);
+            }
+        }
+
+        virtualDB.items = tempMap;
+        virtualDB.isLoaded = true;
+        logDebug(`✔ [裏読み込み完了] 仮想DB構築完了 (キャッシュ件数: ${virtualDB.items.size}件)`);
+    }
+
+    // ==========================================
+    // 3. スキャン成功時の処理（裏読み込みキック ＋ メモリ判定）
+    // ==========================================
     async function onScanSuccess(no) {
         logDebug(`▶ [onScanSuccess] 手配No受取: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
         
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
-        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-area').innerHTML = "<p style='color:#666;'>データを準備中...</p>";
         showScreen('screenDetail');
+
+        // ★ここで人間の操作・選択の裏で非同期にDBデータをロードしに行く
+        await preloadActiveDataForCurrentDevice();
 
         // メモリマップだけで0秒判定
         const targetNo = state.tehai;
@@ -421,6 +473,7 @@
 
         if (res.success) {
             logDebug("✔ データ保存成功");
+            // メモリ上の仮想DBを即時更新（次回スキャン時に即座に反映）
             if (state.mode === 'START') {
                 const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
                 virtualDB.items.set(state.tehai, newRow);
@@ -429,25 +482,10 @@
             }
             alert("成功しました");
             resetToMain();
-            triggerBackgroundSync(state.proc);
         } else {
             logDebug("❌ データ保存失敗: " + res.message);
             alert("失敗: " + res.message);
         }
-    }
-
-    function triggerBackgroundSync(processName) {
-        setTimeout(async () => {
-            if (!processName) return;
-            const res = await callGas(`${GAS_URL}?action=getActiveDataForProcess&process=${encodeURIComponent(processName)}`);
-            if (res && res.success && Array.isArray(res.data)) {
-                res.data.forEach(row => {
-                    const tehaiNo = String(row[0]).trim();
-                    if (tehaiNo) virtualDB.items.set(tehaiNo, row);
-                });
-                logDebug(`✔ バックグラウンド同期完了 (${processName})`);
-            }
-        }, 3000);
     }
 
     function refreshSlots(k) { 
@@ -503,6 +541,7 @@
     async function saveConfig() {
         const sel = Array.from(document.querySelectorAll('#configList button')).filter(b => b.className === "btn-blue").map(b => b.innerText).join(',');
         await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(document.getElementById('inputDeviceName').value)}&processList=${encodeURIComponent(sel)}`);
+        localStorage.removeItem('cache_masters'); // 設定変更時はキャッシュ破棄
         location.reload();
     }
     
