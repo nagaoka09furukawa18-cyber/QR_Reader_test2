@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V4.0 [爆速非同期アーキテクチャ]</title>
+    <title>加工進捗管理 V4.1 [爆速非同期アーキテクチャ]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -48,14 +48,17 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【爆速非同期版 V4.0】</div>
+    <div class="test-badge">【爆速非同期版 V4.1】</div>
     <div id="screenWait" class="screen active"><p>高速起動中...</p></div>
     
     <div id="screenMain" class="screen">
         <h2>加工進捗管理</h2>
         <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
-        <button class="btn-gray" onclick="authAdmin()">管理者設定</button>
+        <div style="margin-top: 15px; display: flex; gap: 8px; justify-content: center;">
+            <button class="btn-gray" onclick="authAdmin()" style="flex: 1; padding: 10px; font-size: 14px;">管理者設定</button>
+            <button class="btn-gray" onclick="forceRefreshMasters()" style="flex: 1; padding: 10px; font-size: 14px;">マスター更新</button>
+        </div>
     </div>
 
     <div id="screenDetail" class="screen">
@@ -98,7 +101,7 @@
     let selectedCuts = []; 
     let targetCutCount = 0; 
 
-    let masters = { processes: [], staffs: [], machines: [], htList: [], weCutList: [], weWireList: [], device: null, version: '' };
+    let masters = { processes: [], staffs: [], machines: [], htList: [], weCutList: [], weWireList: [], device: null };
     let deviceId = localStorage.getItem('test_deviceId') || 'TEST-ID-' + Math.random().toString(36).substring(2, 8).toUpperCase();
     localStorage.setItem('test_deviceId', deviceId);
 
@@ -136,48 +139,38 @@
     }
 
     // ==========================================
-    // 1. 【超高速起動】DB読み込みを一切行わず、1秒で画面を構築
+    // 1. 【超高速起動】ローカルキャッシュから0秒で画面構築
     // ==========================================
     async function init() {
         logDebug("⚡ [init] 高速イニシャライズ開始（DB読込なし）");
         
         let isCacheValid = false;
         try {
-            const cachedVersion = localStorage.getItem('cache_version');
             const cachedMasters = localStorage.getItem('cache_masters');
-
-            if (cachedMasters && cachedVersion) {
-                masters = JSON.parse(cachedMasters);
-                isCacheValid = true;
-                logDebug("✔ ローカルマスターキャッシュを即時適用");
+            if (cachedMasters) {
+                const parsed = JSON.parse(cachedMasters);
+                if (parsed && parsed.device && parsed.device.config) {
+                    masters = parsed;
+                    isCacheValid = true;
+                    logDebug("✔ ローカルマスターキャッシュ適用（通信0回・0秒起動）");
+                }
             }
         } catch (e) {
             logDebug("⚠ キャッシュ読込エラー: " + e);
         }
 
-        // キャッシュがない場合のみ、マスターを軽快に取得
+        // キャッシュがない場合のみサーバーからマスター取得
         if (!isCacheValid) {
-            logDebug("ℹ キャッシュなし：マスター取得中...");
+            logDebug("ℹ キャッシュなし：サーバーからマスター取得中...");
+            document.getElementById('loading-text').innerText = "初期設定読み込み中...";
+            document.getElementById('loading-overlay').style.display = 'flex';
+            
             masters = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
             if (masters && masters.device) {
                 localStorage.setItem('cache_masters', JSON.stringify(masters));
-                if (masters.version) localStorage.setItem('cache_version', masters.version);
+                logDebug("✔ マスターをキャッシュに保存しました");
             }
-        } else {
-            // バックグラウンドでマスターのバージョン（タイムスタンプ等）だけ軽量確認し、更新があればサイレント同期
-            callGas(GAS_URL + "?action=getMastersVersion").then(verRes => {
-                if (verRes && verRes.version && String(verRes.version) !== String(masters.version)) {
-                    logDebug("ℹ マスター更新を検知：バックグラウンドで再取得します");
-                    callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId).then(fresh => {
-                        if (fresh && fresh.device) {
-                            masters = fresh;
-                            localStorage.setItem('cache_masters', JSON.stringify(masters));
-                            if (fresh.version) localStorage.setItem('cache_version', fresh.version);
-                            updateMainStationUI();
-                        }
-                    });
-                }
-            });
+            document.getElementById('loading-overlay').style.display = 'none';
         }
 
         updateMainStationUI();
@@ -202,8 +195,15 @@
         }
     }
 
+    function forceRefreshMasters() {
+        if (confirm("最新のマスター情報（作業者・装置など）を再読み込みしますか？")) {
+            localStorage.removeItem('cache_masters');
+            location.reload();
+        }
+    }
+
     // ==========================================
-    // 2. 【非同期裏読み込み】スキャン後、人間が選択している隙にDB取得
+    // 2. 【非同期裏読み込み】スキャン後、作業者が選択している隙にDB取得
     // ==========================================
     async function preloadActiveDataForCurrentDevice() {
         if (virtualDB.isLoaded) return; // 既にロード済みならスキップ
@@ -231,7 +231,7 @@
 
         virtualDB.items = tempMap;
         virtualDB.isLoaded = true;
-        logDebug(`✔ [裏読み込み完了] 仮想DB構築完了 (キャッシュ件数: ${virtualDB.items.size}件)`);
+        logDebug(`✔ [裏読み込み完了] 仮想DB構築完了 (件数: ${virtualDB.items.size}件)`);
     }
 
     // ==========================================
@@ -245,10 +245,10 @@
         document.getElementById('button-area').innerHTML = "<p style='color:#666;'>データを準備中...</p>";
         showScreen('screenDetail');
 
-        // ★ここで人間の操作・選択の裏で非同期にDBデータをロードしに行く
+        // 操作の裏で非同期にDBデータをロード
         await preloadActiveDataForCurrentDevice();
 
-        // メモリマップだけで0秒判定
+        // スマホ側メモリマップだけで0秒判定
         const targetNo = state.tehai;
         const foundData = virtualDB.items.get(targetNo);
 
@@ -473,7 +473,7 @@
 
         if (res.success) {
             logDebug("✔ データ保存成功");
-            // メモリ上の仮想DBを即時更新（次回スキャン時に即座に反映）
+            // メモリ上の仮想DBを即時更新
             if (state.mode === 'START') {
                 const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
                 virtualDB.items.set(state.tehai, newRow);
