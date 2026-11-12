@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V4.3 [動作確認・デバッグ版]</title>
+    <title>加工進捗管理 V4.5 [手配No受取デバッグ版]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -25,9 +25,8 @@
         #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .test-badge { background: #e83e8c; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+        .test-badge { background: #dc3545; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
         
-        /* 動作確認用のデバッグステータス表示パネル */
         #debug-status-panel {
             background: #e9ecef;
             border: 1px solid #ced4da;
@@ -60,12 +59,12 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【動作確認版 V4.3】</div>
+    <div class="test-badge">【手配No受取デバッグ版 V4.5】</div>
 
-    <!-- 起動時ステータス確認パネル -->
     <div id="debug-status-panel">
         <div>キャッシュ状態: <span id="statusCache">判定中...</span></div>
-        <div>受取手配No: <span id="statusTehai">なし（通常起動）</span></div>
+        <div>URL全体(search): <span id="statusRawUrl" style="word-break: break-all; font-size: 11px;">なし</span></div>
+        <div>抽出手配No: <span id="statusTehai" style="color: #dc3545; font-weight: bold;">なし（通常起動）</span></div>
     </div>
     
     <div id="screenMain" class="screen">
@@ -73,6 +72,17 @@
         <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
         <button class="btn-gray" onclick="authAdmin()" style="width: 100%; padding: 12px; margin-top: 10px;">管理者設定</button>
+    </div>
+
+    <!-- ★受け取った手配Noを確認するための専用画面 -->
+    <div id="screenDebugCheck" class="screen">
+        <h3>【受取テスト確認画面】</h3>
+        <p style="font-size: 14px; color: #666;">ショートカットから受け取った生データです：</p>
+        <div id="rawReceivedValue" style="font-size: 26px; font-weight: bold; color: #dc3545; background: #fff3cd; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; margin: 15px 0; word-break: break-all;">
+            ---
+        </div>
+        <button class="btn-blue btn-main" onclick="proceedToNormalProcess()">この手配Noで処理を進める</button>
+        <button class="btn-gray" onclick="resetToMain()" style="width: 100%; padding: 12px; margin-top: 5px;">やり直す</button>
     </div>
 
     <div id="screenDetail" class="screen">
@@ -114,6 +124,7 @@
     let state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
     let selectedCuts = []; 
     let targetCutCount = 0; 
+    let tempScannedNo = ''; // テスト用一時保持
 
     let masters = { processes: [], staffs: [], machines: [], htList: [], weCutList: [], weWireList: [], device: null };
     let deviceId = localStorage.getItem('test_deviceId') || 'TEST-ID-' + Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -152,7 +163,7 @@
     }
 
     // ==========================================
-    // 1. 起動時：キャッシュ状態と手配Noの検証・可視化
+    // 1. 起動時処理（手配No受取テスト）
     // ==========================================
     async function init() {
         logDebug("⚡ [init] 起動処理開始");
@@ -168,95 +179,82 @@
                     masters = parsed;
                     isCacheValid = true;
                     cacheStatusText = "あり（localStorageから即時ロード成功）";
-                    logDebug("✔ localStorageからマスター読込成功（通信0回・0秒起動）");
-                } else {
-                    cacheStatusText = "あり（ただしデータ構造不正のため再取得）";
                 }
             }
         } catch (e) {
-            cacheStatusText = "エラー（破損検知により再取得）";
-            logDebug("⚠ キャッシュ読込エラー: " + e);
+            cacheStatusText = "エラー";
         }
 
-        // 画面のステータスパネルにキャッシュ状態を反映
         document.getElementById('statusCache').innerText = cacheStatusText;
+        document.getElementById('statusRawUrl').innerText = window.location.search || "なし（クエリなし）";
 
-        // キャッシュがない場合のみサーバーから取得
         if (!isCacheValid) {
-            logDebug("ℹ キャッシュなし：サーバーからマスター取得中...");
             await fetchAndCacheAllMasters();
         } else {
             checkMasterVersionInBackground();
         }
 
         updateMainStationUI();
-        showScreen('screenMain');
-
-        // ★【手配No受け取りの検証】あらゆる形式のパラメータに対応
+        
+        // ★URLパラメータの抽出
         const urlParams = new URLSearchParams(window.location.search);
         let scannedNo = urlParams.get('no') || urlParams.get('text') || urlParams.get('data') || urlParams.get('q');
         
-        // パラメータ名なしで直接 ?12345 のように渡されている場合
         if (!scannedNo && window.location.search.length > 1) {
-            scannedNo = window.location.search.substring(1).split('&')[0];
+            const rawParam = window.location.search.substring(1).split('&')[0];
+            if (rawParam && !rawParam.includes('=')) {
+                scannedNo = decodeURIComponent(rawParam);
+            }
         }
 
-        if (scannedNo) {
+        scannedNo = scannedNo ? String(scannedNo).trim() : "";
+
+        if (scannedNo !== "") {
             logDebug(`🎯 スキャンデータ検出: [${scannedNo}]`);
             document.getElementById('statusTehai').innerText = scannedNo;
+            
+            // ★【検証用ストップ】判定に進む前に、受け取った手配Noを専用画面に大きく表示してストップ
+            tempScannedNo = scannedNo;
+            document.getElementById('rawReceivedValue').innerText = scannedNo;
             window.history.replaceState({}, document.title, window.location.pathname);
-            onScanSuccess(scannedNo);
+            showScreen('screenDebugCheck');
         } else {
-            logDebug("ℹ スキャンデータなし（通常起動）");
+            logDebug("ℹ スキャンデータなし -> メイン画面（QRスキャン待ち）で静止");
             document.getElementById('statusTehai').innerText = "なし（通常起動）";
+            showScreen('screenMain');
         }
     }
 
+    // 「この手配Noで処理を進める」ボタンを押したときに本来の判定（onScanSuccess）へ進む
+    function proceedToNormalProcess() {
+        logDebug(`▶ ユーザー確認完了。通常処理へ移行: [${tempScannedNo}]`);
+        onScanSuccess(tempScannedNo);
+    }
+
     async function fetchAndCacheAllMasters() {
-        document.getElementById('loading-text').innerText = "初期設定読み込み中...";
-        document.getElementById('loading-overlay').style.display = 'flex';
-        
         const res = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         if (res && res.device) {
             masters = res;
             localStorage.setItem('cache_masters', JSON.stringify(masters));
-            
             const verRes = await callGas(GAS_URL + "?action=getSpreadsheetVersion");
-            if (verRes && verRes.version) {
-                localStorage.setItem('cache_version', verRes.version);
-            }
-            logDebug("✔ マスターとバージョンをキャッシュ保存完了");
-            document.getElementById('statusCache').innerText = "あり（新規取得して保存完了）";
-        } else {
-            logDebug("❌ マスター取得失敗");
-            document.getElementById('statusCache').innerText = "取得失敗（要確認）";
+            if (verRes && verRes.version) localStorage.setItem('cache_version', verRes.version);
         }
-        document.getElementById('loading-overlay').style.display = 'none';
     }
 
     async function checkMasterVersionInBackground() {
         try {
             const localVersion = localStorage.getItem('cache_version');
             const verRes = await callGas(GAS_URL + "?action=getSpreadsheetVersion");
-            
-            if (verRes && verRes.success && verRes.version) {
-                if (localVersion !== verRes.version) {
-                    logDebug("ℹ マスター変更を検知：裏で自動更新します");
-                    const fresh = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-                    if (fresh && fresh.device) {
-                        masters = fresh;
-                        localStorage.setItem('cache_masters', JSON.stringify(masters));
-                        localStorage.setItem('cache_version', verRes.version);
-                        updateMainStationUI();
-                        logDebug("✔ 裏での自動マスター更新完了");
-                    }
-                } else {
-                    logDebug("✔ マスターは最新です");
+            if (verRes && verRes.success && verRes.version && localVersion !== verRes.version) {
+                const fresh = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
+                if (fresh && fresh.device) {
+                    masters = fresh;
+                    localStorage.setItem('cache_masters', JSON.stringify(masters));
+                    localStorage.setItem('cache_version', verRes.version);
+                    updateMainStationUI();
                 }
             }
-        } catch (e) {
-            logDebug("⚠ バージョン確認スキップ（オフライン等）");
-        }
+        } catch (e) {}
     }
 
     function updateMainStationUI() {
@@ -273,7 +271,6 @@
     // ==========================================
     async function preloadActiveDataForCurrentDevice() {
         if (virtualDB.isLoaded) return;
-        
         const configStr = masters.device?.config || "";
         if (!configStr) return;
 
@@ -299,7 +296,7 @@
     // 3. スキャン成功時の処理
     // ==========================================
     async function onScanSuccess(no) {
-        logDebug(`▶ [onScanSuccess] 手配No受取処理: [${no}]`);
+        logDebug(`▶ [onScanSuccess] 手配No判定処理開始: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
         
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
