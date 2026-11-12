@@ -416,4 +416,246 @@
         else {
             document.getElementById('button-title').innerText = "工程選択";
             document.getElementById('button-area').innerHTML = "";
-            list.forEach(p => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = p; b.onclick = () => selectProc(p); document.getElementById('button
+            list.forEach(p => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = p; b.onclick = () => selectProc(p); document.getElementById('button-area').appendChild(b); });
+        }
+    }
+
+    function selectProc(p) { 
+        state.proc = p; 
+        refreshSlots('proc'); 
+        const pUpper = p.toUpperCase();
+        if (pUpper.includes("HT")) { renderStartHtUI(); } 
+        else { renderStartStaffUI(); }
+    }
+
+    function renderStartHtUI() {
+        document.getElementById('slot-staff').innerHTML = 'HT項目: <strong id="val-staff">---</strong>';
+        document.getElementById('slot-mac').style.display = 'none';
+        document.getElementById('slot-cut').style.display = 'none';
+        document.getElementById('slot-wire').style.display = 'none';
+        state.staff = ''; state.mac = '';
+        refreshSlots('staff');
+
+        const list = masters.htList || [];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "HTリスト選択";
+        list.forEach(item => { 
+            const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = item; 
+            b.onclick = () => { state.staff = item; state.mac = ""; refreshSlots('staff'); renderFinalConfirm("開始準備完了"); }; 
+            document.getElementById('button-area').appendChild(b); 
+        });
+    }
+
+    function renderStartStaffUI() {
+        document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+        document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+        document.getElementById('slot-mac').style.display = 'block';
+        document.getElementById('slot-cut').style.display = 'none';
+        document.getElementById('slot-wire').style.display = 'none';
+        state.staff = ''; state.mac = '';
+        refreshSlots('staff');
+
+        const list = masters.staffs.filter(r => String(r[0]).trim() === state.proc).map(r => String(r[1]).split(',')).flat().filter(Boolean);
+        if (list.length === 1) { selectStaff(list[0]); }
+        else {
+            document.getElementById('button-area').innerHTML = "";
+            document.getElementById('button-title').innerText = "作業者選択";
+            list.forEach(s => { const b = document.createElement('button'); b.className = "btn-green"; b.innerText = s; b.onclick = () => selectStaff(s); document.getElementById('button-area').appendChild(b); });
+        }
+    }
+
+    function selectStaff(s) { state.staff = s; refreshSlots('staff'); renderStartMacUI(); }
+
+    function renderStartMacUI() {
+        state.mac = '';
+        refreshSlots('mac');
+        const list = [...new Set(masters.machines.filter(r => String(r[0]).trim() === state.proc && String(r[1]).split(',').includes(state.staff)).map(r => String(r[2]).split(',')).flat())].filter(Boolean);
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "装置選択";
+        list.forEach(m => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = m; b.onclick = () => { 
+            state.mac = m; refreshSlots('mac'); 
+            const pUpper = state.proc.toUpperCase();
+            if (pUpper === "WE1" || pUpper === "WE2") { renderStartWeCutModeUI(); } 
+            else { renderFinalConfirm("開始準備完了"); }
+        }; document.getElementById('button-area').appendChild(b); });
+    }
+
+    function renderStartWeCutModeUI() {
+        document.getElementById('slot-cut').style.display = 'block';
+        selectedCuts = []; targetCutCount = 0;
+        state.cut1 = ''; state.cut2 = ''; state.cut3 = '';
+        refreshSlots('cut');
+        const modes = [
+            { label: "なし", count: 0, color: "btn-gray" },
+            { label: "1カット", count: 1, color: "btn-blue" },
+            { label: "2カット", count: 2, color: "btn-blue" },
+            { label: "3カット", count: 3, color: "btn-blue" }
+        ];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "カット回数選択";
+        modes.forEach(m => {
+            const b = document.createElement('button'); b.className = m.color; b.innerText = m.label;
+            b.onclick = () => {
+                targetCutCount = m.count;
+                if (targetCutCount === 0) { state.cut1 = "なし"; refreshSlots('cut'); renderStartWeWireUI(); } 
+                else { renderStartWeCutMasterUI(1); }
+            };
+            document.getElementById('button-area').appendChild(b);
+        });
+    }
+
+    function renderStartWeCutMasterUI(stepIndex) {
+        refreshSlots('cut');
+        const masterList = masters.weCutList || [];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = `【${stepIndex}回目】カット数選択`;
+        masterList.forEach(val => {
+            const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = val;
+            b.onclick = () => {
+                selectedCuts.push(val);
+                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCuts[1] || ''; state.cut3 = selectedCuts[2] || '';
+                refreshSlots('cut');
+                if (stepIndex < targetCutCount) { renderStartWeCutMasterUI(stepIndex + 1); } 
+                else { renderStartWeWireUI(); }
+            };
+            document.getElementById('button-area').appendChild(b);
+        });
+    }
+
+    function renderStartWeWireUI() {
+        document.getElementById('slot-wire').style.display = 'block';
+        state.wire = ''; refreshSlots('wire');
+        const list = masters.weWireList || [];
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "線径選択";
+        list.forEach(wireVal => {
+            const b = document.createElement('button'); b.className = "btn-green"; b.innerText = wireVal;
+            b.onclick = () => { state.wire = wireVal; refreshSlots('wire'); renderFinalConfirm("開始準備完了"); };
+            document.getElementById('button-area').appendChild(b);
+        });
+    }
+
+    function renderFinalConfirm(msg) {
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = msg;
+        const b = document.createElement('button'); b.className = "btn-main btn-green"; b.innerText = "実行する";
+        b.onclick = () => { finalizeAction(); };
+        document.getElementById('button-area').appendChild(b);
+    }
+
+    function restartSelection() { state.mode = "START"; renderStartProcUI(); }
+
+    async function finalizeAction() {
+        logDebug("▶ [finalizeAction] データ保存処理開始");
+        document.getElementById('loading-text').innerText = "データ保存中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+        const devName = masters.device ? masters.device.name : "不明";
+        
+        const url = `${GAS_URL}?action=executeAction&tehaiNo=${encodeURIComponent(state.tehai)}` +
+                    `&process=${encodeURIComponent(state.proc)}` +
+                    `&staff=${encodeURIComponent(state.staff)}` +
+                    `&machine=${encodeURIComponent(state.mac)}` +
+                    `&cut1=${encodeURIComponent(state.cut1)}` +
+                    `&cut2=${encodeURIComponent(state.cut2)}` +
+                    `&cut3=${encodeURIComponent(state.cut3)}` +
+                    `&wire=${encodeURIComponent(state.wire)}` +
+                    `&deviceName=${encodeURIComponent(devName)}` +
+                    `&type=${state.mode === 'END' ? 'end' : 'start'}` +
+                    `&deviceId=${deviceId}`;
+                    
+        const res = await callGas(url);
+        document.getElementById('loading-overlay').style.display = 'none';
+
+        if (res.success) {
+            logDebug("✔ データ保存成功");
+            if (state.mode === 'START') {
+                const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
+                virtualDB.items.set(state.tehai, newRow);
+            } else if (state.mode === 'END') {
+                virtualDB.items.delete(state.tehai);
+            }
+            alert("成功しました");
+            resetToMain();
+        } else {
+            logDebug("❌ データ保存失敗: " + res.message);
+            alert("失敗: " + res.message);
+        }
+    }
+
+    function refreshSlots(k) { 
+        const displayCut = [state.cut1, state.cut2, state.cut3].filter(Boolean).join(', ') || "---";
+        document.getElementById('val-proc').innerText = state.proc || "---";
+        document.getElementById('val-staff').innerText = state.staff || "---";
+        document.getElementById('val-mac').innerText = state.mac || "---";
+        document.getElementById('val-cut').innerText = displayCut;
+        document.getElementById('val-wire').innerText = state.wire || "---";
+
+        ['proc', 'staff', 'mac', 'cut', 'wire'].forEach(id => {
+            const slotEl = document.getElementById('slot-'+id);
+            if (slotEl) {
+                const isSet = (id === 'cut') ? (state.cut1 || state.cut2 || state.cut3) : state[id];
+                slotEl.className = 'select-slot ' + (id === k ? 'active-slot' : (!isSet ? 'disabled' : '')); 
+            }
+        }); 
+    }
+
+    function showScreen(id) { 
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); 
+        document.getElementById(id).classList.add('active'); 
+    }
+    
+    async function resetToMain() { 
+        state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
+        selectedCuts = []; targetCutCount = 0;
+        showScreen('screenMain'); 
+    }
+    
+    function authAdmin() { showScreen('screenAuth'); }
+    
+    async function checkPassword() {
+        const passwordInput = document.getElementById('adminPwInput');
+        const pwValue = passwordInput ? passwordInput.value : "";
+        if (!pwValue) { alert("パスワードが違います"); return; }
+        const res = await callGas(GAS_URL + "?action=getAdminPassword");
+        if (res && pwValue === String(res.password).trim()) {
+            showScreen('screenConfig');
+            const cur = (masters.device?.config || "").split(',');
+            const list = document.getElementById('configList'); 
+            list.innerHTML = "";
+            masters.processes.forEach(p => { 
+                const b = document.createElement('button'); 
+                b.innerText = p; 
+                b.className = cur.includes(p) ? "btn-blue" : "btn-gray"; 
+                b.onclick = () => b.className = b.className === "btn-blue" ? "btn-gray" : "btn-blue"; 
+                list.appendChild(b); 
+            });
+        } else { alert("パスワードが違います"); }
+    }
+    
+    async function saveConfig() {
+        document.getElementById('loading-text').innerText = "端末設定を保存中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+
+        const sel = Array.from(document.querySelectorAll('#configList button')).filter(b => b.className === "btn-blue").map(b => b.innerText).join(',');
+        const devNameInput = document.getElementById('inputDeviceName').value;
+
+        if (!devNameInput.trim()) {
+            alert("端末名を入力してください。");
+            document.getElementById('loading-overlay').style.display = 'none';
+            return;
+        }
+
+        await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(devNameInput)}&processList=${encodeURIComponent(sel)}`);
+        
+        // キャッシュクリアしてリロード
+        localStorage.removeItem('cache_masters');
+        localStorage.removeItem('cache_version');
+        
+        document.getElementById('loading-overlay').style.display = 'none';
+        location.reload();
+    }
+    
+    window.onload = init;
+</script>
+</body>
+</html>
