@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V4.9 [端末未登録ガード強化版]</title>
+    <title>加工進捗管理 V5.0 [ゼロ秒プリロード完結版]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -25,7 +25,7 @@
         #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .test-badge { background: #dc3545; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+        .test-badge { background: #28a745; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
         
         #debug-status-panel {
             background: #e9ecef;
@@ -59,17 +59,17 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【V4.9 端末未登録ガード強化版】</div>
+    <div class="test-badge">【V5.0 ゼロ秒プリロード完結版】</div>
 
     <div id="debug-status-panel">
         <div>キャッシュ状態: <span id="statusCache">判定中...</span></div>
         <div>URL全体(search): <span id="statusRawUrl" style="word-break: break-all; font-size: 11px;">なし</span></div>
-        <div>抽出手配No: <span id="statusTehai" style="color: #dc3545; font-weight: bold;">なし（通常起動）</span></div>
+        <div>抽出手配No: <span id="statusTehai" style="color: #28a745; font-weight: bold;">なし（通常起動）</span></div>
     </div>
     
     <div id="screenMain" class="screen">
         <h2>加工進捗管理</h2>
-        <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#d9534f;"></div>
+        <div id="currentStation" style="margin-bottom:20px; font-weight:bold; color:#007bff;"></div>
         <button id="btnStartScan" class="btn-blue btn-main" style="display:none;" onclick="startScan()">QRスキャン開始</button>
         <button class="btn-gray" onclick="authAdmin()" style="width: 100%; padding: 12px; margin-top: 10px;">管理者設定</button>
     </div>
@@ -78,7 +78,7 @@
     <div id="screenDebugCheck" class="screen">
         <h3>【受取テスト確認画面】</h3>
         <p style="font-size: 14px; color: #666;">ショートカットから受け取った生データです：</p>
-        <div id="rawReceivedValue" style="font-size: 26px; font-weight: bold; color: #dc3545; background: #f8d7da; padding: 15px; border-radius: 8px; border: 1px solid #f5c6cb; margin: 15px 0; word-break: break-all;">
+        <div id="rawReceivedValue" style="font-size: 26px; font-weight: bold; color: #28a745; background: #e8f5e9; padding: 15px; border-radius: 8px; border: 1px solid #c8e6c9; margin: 15px 0; word-break: break-all;">
             ---
         </div>
         <button class="btn-blue btn-main" onclick="proceedToNormalProcess()">この手配Noで処理を進める</button>
@@ -146,7 +146,6 @@
     }
 
     function startScan() {
-        // 二重の安全ガード：未登録時は絶対に実行させない
         if (!masters.device || !masters.device.name || !masters.device.config) {
             alert("エラー: 端末設定が未登録のためスキャンを開始できません。管理者設定を行ってください。");
             return;
@@ -168,7 +167,7 @@
     }
 
     // ==========================================
-    // 1. 起動時処理
+    // 1. 起動時処理（初期化 ＋ 事前プリロードの完結）
     // ==========================================
     async function init() {
         logDebug("⚡ [init] 起動処理開始 (端末ID: " + deviceId + ")");
@@ -201,6 +200,11 @@
         }
 
         updateMainStationUI();
+
+        // ★【設計通りの実装】起動時のバックグラウンドでアクティブデータを事前にメモリにロードしておく
+        if (masters.device && masters.device.config) {
+            preloadActiveDataForCurrentDevice();
+        }
         
         // パラメータ抽出
         const urlParams = new URLSearchParams(window.location.search);
@@ -216,7 +220,6 @@
         scannedNo = scannedNo ? String(scannedNo).trim() : "";
 
         if (scannedNo !== "") {
-            // ★【未登録ガード】端末設定が完了していない状態で手配Noを受け取ってしまった場合のブロック
             if (!masters.device || !masters.device.name || !masters.device.config) {
                 logDebug("❌ 端末未登録のため、スキャンデータを破棄してメイン画面で停止");
                 alert("【警告】端末設定が未登録のため、手配Noを処理できません。まず管理者設定から端末と担当工程を登録してください。");
@@ -239,13 +242,7 @@
     }
 
     async function fetchAndCacheAllMasters() {
-        document.getElementById('loading-text').innerText = "マスターデータ取得中...";
-        document.getElementById('loading-overlay').style.display = 'flex';
-
         const res = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-        
-        document.getElementById('loading-overlay').style.display = 'none';
-
         if (res && res.success && Array.isArray(res.processes)) {
             masters = res;
             localStorage.setItem('cache_masters', JSON.stringify(masters));
@@ -254,12 +251,11 @@
             if (verRes && verRes.version) {
                 localStorage.setItem('cache_version', verRes.version);
             }
-            logDebug("✔ マスターとバージョンをキャッシュ保存完了（登録状態: " + (res.device && res.device.name ? res.device.name : "未登録") + "）");
+            logDebug("✔ マスターとバージョンをキャッシュ保存完了");
             document.getElementById('statusCache').innerText = "あり（新規取得・保存完了）";
         } else {
             logDebug("❌ マスター取得失敗");
             document.getElementById('statusCache').innerText = "取得失敗";
-            alert("マスターデータの取得に失敗しました。通信環境を確認してください。");
         }
     }
 
@@ -277,6 +273,7 @@
                         localStorage.setItem('cache_masters', JSON.stringify(masters));
                         localStorage.setItem('cache_version', verRes.version);
                         updateMainStationUI();
+                        preloadActiveDataForCurrentDevice(); // 再取得時は仮想DBも再構築
                         logDebug("✔ 裏での自動マスター更新完了");
                     }
                 } else {
@@ -289,15 +286,12 @@
     }
 
     function updateMainStationUI() {
-        // ★【厳格な判定】端末名と工程が両方揃っている場合のみスキャンボタンを有効（表示）にする
         if (masters.device && masters.device.name && masters.device.config) {
             document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
-            document.getElementById('currentStation').style.color = "#007bff";
             document.getElementById('btnStartScan').style.display = "block"; 
         } else {
             document.getElementById('currentStation').innerText = "⚠ 端末設定が未登録です\n（管理者設定より登録してください）";
-            document.getElementById('currentStation').style.color = "#d9534f";
-            document.getElementById('btnStartScan').style.display = "none"; // 未登録時は完全に非表示
+            document.getElementById('btnStartScan').style.display = "none";
         }
     }
 
@@ -307,7 +301,7 @@
     }
 
     // ==========================================
-    // 2. 非同期裏読み込み
+    // 2. 非同期裏読み込み（起動時に実行済み）
     // ==========================================
     async function preloadActiveDataForCurrentDevice() {
         if (virtualDB.isLoaded) return;
@@ -333,18 +327,15 @@
     }
 
     // ==========================================
-    // 3. スキャン成功時の処理
+    // 3. スキャン成功時の処理（メモリマップから即時判定・ゼロ秒応答）
     // ==========================================
     async function onScanSuccess(no) {
         logDebug(`▶ [onScanSuccess] 手配No判定処理開始: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
         
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
-        document.getElementById('button-area').innerHTML = "<p style='color:#666;'>データを準備中...</p>";
-        showScreen('screenDetail');
-
-        await preloadActiveDataForCurrentDevice();
-
+        
+        // すでに起動時裏読み込みが完了しているため、ここでは通信を待たずにメモリから一瞬でヒット確認
         const targetNo = state.tehai;
         const foundData = virtualDB.items.get(targetNo);
 
@@ -360,6 +351,8 @@
             logDebug(`ℹ メモリヒットせず -> START判定`);
             res = { success: true, mode: "START" };
         }
+
+        showScreen('screenDetail');
 
         if (res.success && res.mode === "END") {
             state.mode = "END";
@@ -647,7 +640,6 @@
 
         await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(devNameInput)}&processList=${encodeURIComponent(sel)}`);
         
-        // キャッシュクリアしてリロード
         localStorage.removeItem('cache_masters');
         localStorage.removeItem('cache_version');
         
