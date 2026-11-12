@@ -559,8 +559,15 @@
     
     async function resetToMain() { 
         state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
-        selectedCuts = []; targetCutCount = 0;
+        selectedCuts = []; 
+        targetCutCount = 0;
+        
+        // メイン画面に戻る際、端末設定やUI表示を確実に再構築する
+        updateMainStationUI();
+        document.getElementById('statusCache').innerText = "準備完了";
+        
         showScreen('screenMain'); 
+        logDebug("ℹ メイン画面に復帰しました");
     }
     
     async function authAdmin() { showScreen('screenAuth'); }
