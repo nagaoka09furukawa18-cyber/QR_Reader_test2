@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V5.6 [判定ロジック完全版]</title>
+    <title>加工進捗管理 V5.8 [並行処理・判定完全版]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -27,30 +27,9 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .test-badge { background: #28a745; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
         
-        #debug-status-panel {
-            background: #e9ecef;
-            border: 1px solid #ced4da;
-            border-radius: 8px;
-            padding: 10px;
-            margin-bottom: 15px;
-            text-align: left;
-            font-size: 13px;
-        }
+        #debug-status-panel { background: #e9ecef; border: 1px solid #ced4da; border-radius: 8px; padding: 10px; margin-bottom: 15px; text-align: left; font-size: 13px; }
         #debug-status-panel span { font-weight: bold; color: #007bff; }
-
-        #debug-monitor {
-            margin-top: 15px;
-            background: #222;
-            color: #0f0;
-            font-family: monospace;
-            font-size: 11px;
-            text-align: left;
-            padding: 10px;
-            border-radius: 8px;
-            max-height: 120px;
-            overflow-y: auto;
-            word-break: break-all;
-        }
+        #debug-monitor { margin-top: 15px; background: #222; color: #0f0; font-family: monospace; font-size: 11px; text-align: left; padding: 10px; border-radius: 8px; max-height: 120px; overflow-y: auto; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -59,12 +38,11 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【V5.6 判定ロジック完全版】</div>
+    <div class="test-badge">【V5.8 並行処理・判定完全版】</div>
 
     <div id="debug-status-panel">
-        <div>キャッシュ状態: <span id="statusCache">判定中...</span></div>
-        <div>URL全体(search): <span id="statusRawUrl" style="word-break: break-all; font-size: 11px;">なし</span></div>
-        <div>抽出手配No: <span id="statusTehai" style="color: #28a745; font-weight: bold;">なし（通常起動）</span></div>
+        <div>システム状態: <span id="statusCache">初期化中...</span></div>
+        <div>抽出手配No: <span id="statusTehai" style="color: #28a745; font-weight: bold;">なし</span></div>
     </div>
     
     <div id="screenMain" class="screen">
@@ -139,7 +117,7 @@
             alert("エラー: 端末設定が未登録のためスキャンを開始できません。管理者設定を行ってください。");
             return;
         }
-        logDebug("▶ [startScan] iOSショートカット呼び出し開始");
+        logDebug("▶ [startScan] ショートカット呼び出し開始");
         const currentBaseUrl = window.location.origin + window.location.pathname;
         const shortcutName = encodeURIComponent("加工スキャン");
         window.location.href = `shortcuts://run-shortcut?name=${shortcutName}&input=text&text=${encodeURIComponent(currentBaseUrl)}`;
@@ -159,32 +137,17 @@
     // 1. 初期起動時処理
     // ==========================================
     async function init() {
-        logDebug("⚡ [init] 初期起動処理開始 (端末ID: " + deviceId + ")");
+        logDebug("⚡ [init] 初期化開始 (ID: " + deviceId + ")");
         
-        let isCacheValid = false;
-        let cacheStatusText = "なし（新規取得が必要）";
-
         try {
             const cachedMasters = localStorage.getItem('cache_masters');
-            if (cachedMasters) {
-                const parsed = JSON.parse(cachedMasters);
-                if (parsed && Array.isArray(parsed.processes) && parsed.processes.length > 0) {
-                    masters = parsed;
-                    isCacheValid = true;
-                    cacheStatusText = "あり（localStorageから即時ロード）";
-                }
-            }
+            if (cachedMasters) masters = JSON.parse(cachedMasters);
         } catch (e) {
-            cacheStatusText = "エラー";
+            logDebug("⚠ マスターキャッシュ読込エラー");
         }
 
-        document.getElementById('statusCache').innerText = cacheStatusText;
-        document.getElementById('statusRawUrl').innerText = window.location.search || "なし（通常起動）";
-
-        // パラメータ抽出
         const urlParams = new URLSearchParams(window.location.search);
         let scannedNo = urlParams.get('tehaiNo') || urlParams.get('no') || urlParams.get('text') || urlParams.get('data') || urlParams.get('q');
-        
         if (!scannedNo && window.location.search.length > 1) {
             const rawParam = window.location.search.substring(1).split('&')[0];
             if (rawParam) {
@@ -193,37 +156,31 @@
             }
         }
         scannedNo = scannedNo ? String(scannedNo).trim() : "";
-
         document.getElementById('statusTehai').innerText = scannedNo !== "" ? scannedNo : "なし（通常起動）";
+
         loadActiveCacheFromLocalStorage();
 
-        // A. 【QRスキャン経由（手配Noあり）の場合】
+        if (!masters.processes || masters.processes.length === 0) {
+            await fetchAndCacheAllMasters();
+        }
+
         if (scannedNo !== "") {
             window.history.replaceState({}, document.title, window.location.pathname);
 
             if (!masters.device || !masters.device.name || !masters.device.config) {
-                logDebug("❌ 端末未登録のため処理中断");
-                alert("【警告】端末設定が未登録のため、手配Noを処理できません。まず管理者設定から端末と担当工程を登録してください。");
+                alert("【警告】端末設定が未登録です。まず管理者設定を行ってください。");
                 showScreen('screenMain');
                 return;
             }
 
-            logDebug(`🎯 スキャン処理へ移行: [${scannedNo}]`);
-            onScanSuccess(scannedNo);
+            logDebug(`🎯 【スキャン受付】 [${scannedNo}] -> 並行処理・判定フロー開始`);
+            onScanSuccessParallel(scannedNo);
             return;
         }
 
-        // B. 【初期立ち上げ時（通常起動・スキャンなし）の場合】
-        if (!isCacheValid) {
-            logDebug("ℹ 初回起動でマスターキャッシュがないためサーバーから取得します...");
-            await fetchAndCacheAllMasters();
-        } else {
-            logDebug("✔ キャッシュ済みのマスターを即時適用");
-        }
-
         updateMainStationUI();
-        logDebug("ℹ メイン画面（QRスキャン待ち）を表示");
         showScreen('screenMain');
+        document.getElementById('statusCache').innerText = "準備完了";
     }
 
     async function fetchAndCacheAllMasters() {
@@ -231,11 +188,7 @@
         if (res && res.success && Array.isArray(res.processes)) {
             masters = res;
             localStorage.setItem('cache_masters', JSON.stringify(masters));
-            logDebug("✔ マスターをキャッシュ保存完了");
-            document.getElementById('statusCache').innerText = "あり（新規取得・保存完了）";
-        } else {
-            logDebug("❌ マスター取得失敗");
-            document.getElementById('statusCache').innerText = "取得失敗";
+            logDebug("✔ マスター取得・保存完了");
         }
     }
 
@@ -250,39 +203,31 @@
     }
 
     // ==========================================
-    // 2. ローカルストレージ キャッシュ管理
+    // 2. キャッシュ管理
     // ==========================================
     function loadActiveCacheFromLocalStorage() {
         try {
             const raw = localStorage.getItem('local_active_records');
             if (raw) {
-                const arr = JSON.parse(raw);
-                activeCache.items = new Map(arr);
+                activeCache.items = new Map(JSON.parse(raw));
                 activeCache.isLoaded = true;
-                logDebug(`✔ ローカルキャッシュ読込完了 (${activeCache.items.size}件)`);
+                logDebug(`✔ ローカルキャッシュ読込 (${activeCache.items.size}件)`);
             }
-        } catch(e) {
-            logDebug("⚠ ローカルキャッシュ読込エラー");
-        }
+        } catch(e) { logDebug("⚠ ローカルキャッシュ読込エラー"); }
     }
 
     function saveActiveCacheToLocalStorage() {
         try {
-            const arr = Array.from(activeCache.items.entries());
-            localStorage.setItem('local_active_records', JSON.stringify(arr));
-        } catch(e) {
-            logDebug("⚠ ローカルキャッシュ保存エラー");
-        }
+            localStorage.setItem('local_active_records', JSON.stringify(Array.from(activeCache.items.entries())));
+        } catch(e) { logDebug("⚠ ローカルキャッシュ保存エラー"); }
     }
 
     function preloadActiveDataInBackground() {
-        if (activeCache.isLoaded) return Promise.resolve();
         if (activeCache.promise) return activeCache.promise;
-
         const configStr = masters.device?.config || "";
         if (!configStr) return Promise.resolve();
 
-        logDebug("🔄 [DB一括読み込み] アクティブデータ取得中...");
+        logDebug("🔄 [裏ロード開始] バックグラウンドでアクティブデータを取得中...");
         activeCache.promise = callGas(`${GAS_URL}?action=getActiveDataForProcesses&processes=${encodeURIComponent(configStr)}`)
             .then(res => {
                 if (res && res.success && Array.isArray(res.data)) {
@@ -292,31 +237,26 @@
                     });
                     activeCache.isLoaded = true;
                     saveActiveCacheToLocalStorage();
-                    logDebug(`✔ [DB読込完了] メモリDB構築 (件数: ${activeCache.items.size}件)`);
+                    logDebug(`✔ [裏ロード完了] メモリDB更新 (件数: ${activeCache.items.size}件)`);
                 }
             })
-            .catch(e => {
-                logDebug(`❌ DB読込失敗: ${e}`);
-            })
-            .finally(() => {
-                activeCache.promise = null;
-            });
+            .catch(e => { logDebug(`❌ 裏ロードエラー: ${e}`); })
+            .finally(() => { activeCache.promise = null; });
 
         return activeCache.promise;
     }
 
     // ==========================================
-    // 3. QRスキャン時の判定・処理フロー（UIブロッキング完全排除版）
+    // 3. スキャン時：並行処理・判定フロー
     // ==========================================
-    async function onScanSuccess(no) {
-        logDebug(`▶ [onScanSuccess] スキャン処理開始: [${no}]`);
+    function onScanSuccessParallel(no) {
+        logDebug(`▶ [onScanSuccessParallel] 開始: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
         
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
         showScreen('screenDetail');
 
-        // 1. ローカルキャッシュ（localStorage）をロード
-        loadActiveCacheFromLocalStorage();
+        // ① まず手元のキャッシュをチェック
         let foundData = activeCache.items.get(state.tehai);
 
         if (foundData) {
@@ -325,49 +265,28 @@
             return;
         }
 
-        // 2. キャッシュにない場合でも、UIを絶対にフリーズさせないため
-        //    「確認中...」の表示を出しつつ、DBロードはawaitせずに裏で走らせる（Fire-and-Forget）
-        document.getElementById('button-title').innerText = "ステータス確認中...";
-        document.getElementById('button-area').innerHTML = "<p style='color:#666;'>データベースを確認中...</p>";
-        
-        logDebug("ℹ キャッシュに手配Noがないため、DBからバックグラウンドで同期を取得します...");
+        // ② キャッシュにない場合：
+        // 【重要】UI操作を一切ブロックせず、裏でDBロードを走らせる（完全に並行稼働）
+        preloadActiveDataInBackground();
 
-        // ★【重要】awaitを外して、UIスレッドをブロックしないようにする
-        preloadActiveDataInBackground().then(() => {
-            // 裏ロードが完了した時点で、再度メモリMap（activeCache.items）をチェック
-            let reCheckedData = activeCache.items.get(state.tehai);
-
-            if (reCheckedData) {
-                logDebug(`⚠ 【DB検出(遅延ロード)】未了データ検出のためENDモードへ切替`);
-                activeCache.items.set(state.tehai, reCheckedData);
-                saveActiveCacheToLocalStorage();
-                applyEndMode(reCheckedData);
-            } else {
-                logDebug(`ℹ DBにもデータなし → 新規STARTモードへ切替`);
-                state.mode = "START";
-                renderStartProcUI();
-            }
-        }).catch(err => {
-            logDebug(`❌ バックグラウンド読込エラー: ${err}`);
-            // エラー時もフリーズさせず、新規STARTとして操作可能にする
-            state.mode = "START";
-            renderStartProcUI();
-        });
+        // 作業者は裏のロードを待つことなく、即座に通常の「新規スタート（工程選択）」操作を始められる！
+        logDebug(`ℹ キャッシュなし → 作業者の選択操作を許可しつつ、裏ロードと連動します`);
+        state.mode = "START";
+        renderStartProcUI();
     }
-    
-    // ENDモード適用（開始日時を表示し、終了忘れ・放置に気づかせる）
+
+    // ENDモード適用（開始日時を表示し、終了忘れに気づかせる）
     function applyEndMode(workData) {
         state.mode = "END";
         state.proc = workData[1];
         state.staff = workData[2] || ''; 
         state.mac = workData[3] || '';
-        const startTimeStr = workData[4] || ''; // 開始日時
+        const startTimeStr = workData[4] || ''; 
         state.cut1 = workData[8] || '';
         state.cut2 = workData[9] || '';
         state.cut3 = workData[10] || '';
         state.wire = workData[11] || '';
         
-        // 開始日時を見やすい形に整形（例: "11/12 08:30"）
         let formattedStartTime = "不明";
         if (startTimeStr) {
             try {
@@ -378,19 +297,14 @@
                     const hours = String(d.getHours()).padStart(2, '0');
                     const mins = String(d.getMinutes()).padStart(2, '0');
                     formattedStartTime = `${month}/${day} ${hours}:${mins}`;
-                } else {
-                    formattedStartTime = startTimeStr;
-                }
-            } catch (e) {
-                formattedStartTime = startTimeStr;
-            }
+                } else { formattedStartTime = startTimeStr; }
+            } catch (e) { formattedStartTime = startTimeStr; }
         }
 
-        // 画面上部に手配Noと「開始日時」を同時に表示し、長期間放置（終了忘れ）に気づかせる
         document.getElementById('tehaiDisplay').innerHTML = 
             `手配No：<span>${state.tehai}</span>` +
             `<div style="font-size: 13px; color: #d9534f; margin-top: 5px; font-weight: normal;">` +
-            `⚠️ 開始日時: ${formattedStartTime}` +
+            `⚠️ 開始日時: ${formattedStartTime} (※終了忘れ注意)` +
             `</div>`;
 
         const pUpper = state.proc.toUpperCase();
@@ -415,6 +329,36 @@
 
         refreshSlots();
         renderFinalConfirm("完了報告を送信しますか？");
+    }
+
+    // 選択完了時（最終確認の瞬間）に裏ロードの完了を待って最終判定を行う
+    async function renderFinalConfirm(msg) {
+        document.getElementById('button-area').innerHTML = "";
+        document.getElementById('button-title').innerText = "判定確認中...";
+
+        // もし裏でDBロードがまだ走っていれば、ここで確実に完了を待つ
+        if (activeCache.promise) {
+            logDebug("⏳ 選択完了：裏ロードの完了を待って最終判定を行います...");
+            await activeCache.promise;
+        }
+
+        // 最終確認：裏ロードが終わったメモリDBに、この手配Noが存在するか？
+        const existingData = activeCache.items.get(state.tehai);
+
+        if (existingData && state.mode === "START") {
+            // 「新規のつもりで選択を進めていたが、実は裏のDBロードで既に未了データ（ゾンビデータ）として存在していた」場合
+            logDebug(`⚠ 【自動切替】DB上に未了データを発見したため、自動的にENDモードへ切り替えます`);
+            applyEndMode(existingData);
+            return;
+        }
+
+        // 通常の確定ボタン表示
+        document.getElementById('button-title').innerText = msg;
+        const b = document.createElement('button'); 
+        b.className = "btn-main " + (state.mode === 'END' ? "btn-blue" : "btn-green"); 
+        b.innerText = state.mode === 'END' ? "作業終了を実行" : "作業開始を実行";
+        b.onclick = () => { finalizeAction(); };
+        document.getElementById('button-area').appendChild(b);
     }
 
     function renderStartProcUI() {
@@ -528,7 +472,7 @@
             const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = val;
             b.onclick = () => {
                 selectedCuts.push(val);
-                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCuts[1] || ''; state.cut3 = selectedCuts[2] || '';
+                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCils[1] || ''; state.cut3 = selectedCuts[2] || '';
                 refreshSlots('cut');
                 if (stepIndex < targetCutCount) { renderStartWeCutMasterUI(stepIndex + 1); } 
                 else { renderStartWeWireUI(); }
@@ -548,14 +492,6 @@
             b.onclick = () => { state.wire = wireVal; refreshSlots('wire'); renderFinalConfirm("開始準備完了"); };
             document.getElementById('button-area').appendChild(b);
         });
-    }
-
-    function renderFinalConfirm(msg) {
-        document.getElementById('button-area').innerHTML = "";
-        document.getElementById('button-title').innerText = msg;
-        const b = document.createElement('button'); b.className = "btn-main btn-green"; b.innerText = "実行する";
-        b.onclick = () => { finalizeAction(); };
-        document.getElementById('button-area').appendChild(b);
     }
 
     function restartSelection() { state.mode = "START"; renderStartProcUI(); }
@@ -583,18 +519,14 @@
 
         if (res.success) {
             logDebug("✔ データ保存成功");
-
             if (state.mode === 'START') {
                 const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
                 activeCache.items.set(state.tehai, newRow);
                 saveActiveCacheToLocalStorage();
-                logDebug(`⚡ ローカルキャッシュに手配No [${state.tehai}] を追加しました`);
             } else if (state.mode === 'END') {
                 activeCache.items.delete(state.tehai);
                 saveActiveCacheToLocalStorage();
-                logDebug(`⚡ ローカルキャッシュから手配No [${state.tehai}] を削除しました`);
             }
-
             alert("成功しました");
             resetToMain();
         } else {
@@ -631,56 +563,39 @@
         showScreen('screenMain'); 
     }
     
-    function authAdmin() { showScreen('screenAuth'); }
+    async function authAdmin() { showScreen('screenAuth'); }
     
     async function checkPassword() {
         const passwordInput = document.getElementById('adminPwInput');
         const pwValue = passwordInput ? passwordInput.value : "";
         if (!pwValue) { alert("パスワードを入力してください"); return; }
 
-        document.getElementById('loading-text').innerText = "認証およびマスター確認中...";
+        document.getElementById('loading-text').innerText = "認証中...";
         document.getElementById('loading-overlay').style.display = 'flex';
-
         const res = await callGas(GAS_URL + "?action=getAdminPassword");
         
-        // もしマスターが空（キャッシュクリア後など）なら、ここで一括取得を試みる
         if (!masters.processes || masters.processes.length === 0) {
             await fetchAndCacheAllMasters();
         }
-
         document.getElementById('loading-overlay').style.display = 'none';
 
         if (res && pwValue === String(res.password).trim()) {
             showScreen('screenConfig');
-            
-            // 端末名がすでにあれば入力欄に反映
             if (masters.device && masters.device.name) {
                 document.getElementById('inputDeviceName').value = masters.device.name;
             }
-
             const cur = (masters.device?.config || "").split(',');
             const list = document.getElementById('configList'); 
             list.innerHTML = "";
-            
-            if (!masters.processes || masters.processes.length === 0) {
-                list.innerHTML = "<p style='color:red;'>工程マスターが取得できませんでした。通信環境を確認してください。</p>";
-                return;
-            }
-
             masters.processes.forEach(p => { 
                 const b = document.createElement('button'); 
                 b.innerText = p; 
                 b.className = cur.includes(p) ? "btn-blue" : "btn-gray"; 
                 b.style.margin = "4px";
-                // クリックで選択・非選択をトグル
-                b.onclick = () => {
-                    b.className = (b.className === "btn-blue") ? "btn-gray" : "btn-blue";
-                }; 
+                b.onclick = () => { b.className = (b.className === "btn-blue") ? "btn-gray" : "btn-blue"; }; 
                 list.appendChild(b); 
             });
-        } else { 
-            alert("パスワードが違います"); 
-        }
+        } else { alert("パスワードが違います"); }
     }
     
     async function saveConfig() {
@@ -699,7 +614,6 @@
         await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(devNameInput)}&processList=${encodeURIComponent(sel)}`);
         
         localStorage.removeItem('cache_masters');
-        localStorage.removeItem('cache_version');
         localStorage.removeItem('local_active_records');
         
         document.getElementById('loading-overlay').style.display = 'none';
