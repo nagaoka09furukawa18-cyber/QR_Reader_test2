@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V5.0 [ゼロ秒プリロード完結版]</title>
+    <title>加工進捗管理 V5.1 [高速応答版]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -59,7 +59,7 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【V5.0 ゼロ秒プリロード完結版】</div>
+    <div class="test-badge">【V5.1 高速応答版】</div>
 
     <div id="debug-status-panel">
         <div>キャッシュ状態: <span id="statusCache">判定中...</span></div>
@@ -130,11 +130,6 @@
     let deviceId = localStorage.getItem('test_deviceId') || 'TEST-ID-' + Math.random().toString(36).substring(2, 8).toUpperCase();
     localStorage.setItem('test_deviceId', deviceId);
 
-    let virtualDB = {
-        items: new Map(),
-        isLoaded: false
-    };
-
     function logDebug(msg) {
         const monitor = document.getElementById('debug-monitor');
         if (monitor) {
@@ -167,10 +162,10 @@
     }
 
     // ==========================================
-    // 1. 起動時処理（初期化 ＋ プリロード完了まで待機）
+    // 1. 起動時処理（無駄なロードを排除した高速初期化）
     // ==========================================
     async function init() {
-        logDebug("⚡ [init] 起動処理開始 (端末ID: " + deviceId + ")");
+        logDebug("⚡ [init] 高速起動処理開始 (端末ID: " + deviceId + ")");
         
         let isCacheValid = false;
         let cacheStatusText = "なし（新規取得）";
@@ -201,13 +196,7 @@
 
         updateMainStationUI();
 
-        // ★【最重要修正】端末設定が完了している場合は、起動時に必ずDBプリロードの完了をawaitで待つ
-        if (masters.device && masters.device.config) {
-            document.getElementById('loading-text').innerText = "稼働データをロード中...";
-            document.getElementById('loading-overlay').style.display = 'flex';
-            await preloadActiveDataForCurrentDevice();
-            document.getElementById('loading-overlay').style.display = 'none';
-        }
+        // ★余計なDB一括ロードは完全に排除し、スキャン時は直接高速チェック（checkStatus）を使用します
         
         // パラメータ抽出
         const urlParams = new URLSearchParams(window.location.search);
@@ -243,6 +232,7 @@
             showScreen('screenMain');
         }
     }
+
     async function fetchAndCacheAllMasters() {
         const res = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
         if (res && res.success && Array.isArray(res.processes)) {
@@ -275,7 +265,6 @@
                         localStorage.setItem('cache_masters', JSON.stringify(masters));
                         localStorage.setItem('cache_version', verRes.version);
                         updateMainStationUI();
-                        preloadActiveDataForCurrentDevice(); // 再取得時は仮想DBも再構築
                         logDebug("✔ 裏での自動マスター更新完了");
                     }
                 } else {
@@ -303,58 +292,20 @@
     }
 
     // ==========================================
-    // 2. 非同期裏読み込み（起動時に実行済み）
-    // ==========================================
-    async function preloadActiveDataForCurrentDevice() {
-        if (virtualDB.isLoaded) return;
-        const configStr = masters.device?.config || "";
-        if (!configStr) return;
-
-        logDebug("🔄 [裏読み込み開始] アクティブデータ一括取得中...");
-        try {
-            const res = await callGas(`${GAS_URL}?action=getActiveDataForProcesses&processes=${encodeURIComponent(configStr)}`);
-            let tempMap = new Map();
-            if (res && res.success && Array.isArray(res.data)) {
-                res.data.forEach(row => {
-                    const tehaiNo = String(row[0]).trim();
-                    if (tehaiNo) tempMap.set(tehaiNo, row);
-                });
-            }
-            virtualDB.items = tempMap;
-            virtualDB.isLoaded = true;
-            logDebug(`✔ [裏読み込み完了] 仮想DB構築 (件数: ${virtualDB.items.size}件)`);
-        } catch (e) {
-            logDebug(`❌ 裏読み込み失敗: ${e}`);
-        }
-    }
-
-    // ==========================================
-    // 3. スキャン成功時の処理（メモリマップから即時判定・ゼロ秒応答）
+    // 2. スキャン成功時の処理（checkStatusで軽量・高速判定）
     // ==========================================
     async function onScanSuccess(no) {
-        logDebug(`▶ [onScanSuccess] 手配No判定処理開始: [${no}]`);
+        logDebug(`▶ [onScanSuccess] ステータス高速確認開始: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
         
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
-        
-        // すでに起動時裏読み込みが完了しているため、ここでは通信を待たずにメモリから一瞬でヒット確認
-        const targetNo = state.tehai;
-        const foundData = virtualDB.items.get(targetNo);
-
-        let res = null;
-        if (foundData) {
-            logDebug(`✔ メモリヒット -> END判定`);
-            if (foundData[4] !== "" && foundData[4] != null) {
-                res = { success: true, mode: "END", workData: foundData, process: foundData[1] };
-            } else {
-                res = { success: false, mode: "ERROR", message: "開始時間が記録されていません" };
-            }
-        } else {
-            logDebug(`ℹ メモリヒットせず -> START判定`);
-            res = { success: true, mode: "START" };
-        }
-
+        document.getElementById('button-area').innerHTML = "<p style='color:#666;'>確認中...</p>";
         showScreen('screenDetail');
+
+        // サーバー側の軽量ステータス確認APIを直接叩くことで、無駄な全件ロードを避けて一瞬で判定
+        const configStr = masters.device?.config || "";
+        const checkUrl = `${GAS_URL}?action=checkStatus&tehaiNo=${encodeURIComponent(state.tehai)}&processList=${encodeURIComponent(configStr)}`;
+        const res = await callGas(checkUrl);
 
         if (res.success && res.mode === "END") {
             state.mode = "END";
@@ -563,12 +514,6 @@
 
         if (res.success) {
             logDebug("✔ データ保存成功");
-            if (state.mode === 'START') {
-                const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
-                virtualDB.items.set(state.tehai, newRow);
-            } else if (state.mode === 'END') {
-                virtualDB.items.delete(state.tehai);
-            }
             alert("成功しました");
             resetToMain();
         } else {
