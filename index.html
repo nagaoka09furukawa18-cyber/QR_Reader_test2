@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V4.6 [パラメータ抽出修正版]</title>
+    <title>加工進捗管理 V4.7 [端末設定・キャッシュ完全同期版]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -25,7 +25,7 @@
         #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .test-badge { background: #28a745; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+        .test-badge { background: #007bff; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
         
         #debug-status-panel {
             background: #e9ecef;
@@ -59,12 +59,12 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【パラメータ抽出修正版 V4.6】</div>
+    <div class="test-badge">【完全同期版 V4.7】</div>
 
     <div id="debug-status-panel">
         <div>キャッシュ状態: <span id="statusCache">判定中...</span></div>
         <div>URL全体(search): <span id="statusRawUrl" style="word-break: break-all; font-size: 11px;">なし</span></div>
-        <div>抽出手配No: <span id="statusTehai" style="color: #28a745; font-weight: bold;">なし（通常起動）</span></div>
+        <div>抽出手配No: <span id="statusTehai" style="color: #007bff; font-weight: bold;">なし（通常起動）</span></div>
     </div>
     
     <div id="screenMain" class="screen">
@@ -78,7 +78,7 @@
     <div id="screenDebugCheck" class="screen">
         <h3>【受取テスト確認画面】</h3>
         <p style="font-size: 14px; color: #666;">ショートカットから受け取った生データです：</p>
-        <div id="rawReceivedValue" style="font-size: 26px; font-weight: bold; color: #28a745; background: #e8f5e9; padding: 15px; border-radius: 8px; border: 1px solid #c8e6c9; margin: 15px 0; word-break: break-all;">
+        <div id="rawReceivedValue" style="font-size: 26px; font-weight: bold; color: #007bff; background: #e8f4fd; padding: 15px; border-radius: 8px; border: 1px solid #b8daff; margin: 15px 0; word-break: break-all;">
             ---
         </div>
         <button class="btn-blue btn-main" onclick="proceedToNormalProcess()">この手配Noで処理を進める</button>
@@ -163,10 +163,10 @@
     }
 
     // ==========================================
-    // 1. 起動時処理（パラメータ抽出強化版）
+    // 1. 起動時処理
     // ==========================================
     async function init() {
-        logDebug("⚡ [init] 起動処理開始");
+        logDebug("⚡ [init] 起動処理開始 (端末ID: " + deviceId + ")");
         
         let isCacheValid = false;
         let cacheStatusText = "なし（新規取得）";
@@ -175,10 +175,11 @@
             const cachedMasters = localStorage.getItem('cache_masters');
             if (cachedMasters) {
                 const parsed = JSON.parse(cachedMasters);
-                if (parsed && parsed.device && parsed.device.config) {
+                // 端末未登録状態でもマスター(processes)があればキャッシュ有効とする
+                if (parsed && Array.isArray(parsed.processes) && parsed.processes.length > 0) {
                     masters = parsed;
                     isCacheValid = true;
-                    cacheStatusText = "あり（localStorageから即時ロード成功）";
+                    cacheStatusText = "あり（localStorageから即時ロード）";
                 }
             }
         } catch (e) {
@@ -189,6 +190,7 @@
         document.getElementById('statusRawUrl').innerText = window.location.search || "なし（クエリなし）";
 
         if (!isCacheValid) {
+            logDebug("ℹ キャッシュなし：サーバーからマスター取得中...");
             await fetchAndCacheAllMasters();
         } else {
             checkMasterVersionInBackground();
@@ -196,11 +198,10 @@
 
         updateMainStationUI();
         
-        // ★【パラメータ抽出の完全強化】tehaiNo, no, text, data, q のすべてを走査
+        // パラメータ抽出
         const urlParams = new URLSearchParams(window.location.search);
         let scannedNo = urlParams.get('tehaiNo') || urlParams.get('no') || urlParams.get('text') || urlParams.get('data') || urlParams.get('q');
         
-        // パラメータ名なしで直接 ?A12305001 のように渡されている場合のケア
         if (!scannedNo && window.location.search.length > 1) {
             const rawParam = window.location.search.substring(1).split('&')[0];
             if (rawParam && !rawParam.includes('=')) {
@@ -213,31 +214,32 @@
         if (scannedNo !== "") {
             logDebug(`🎯 スキャンデータ検出: [${scannedNo}]`);
             document.getElementById('statusTehai').innerText = scannedNo;
-            
-            // 検証用ストップ画面へ
             tempScannedNo = scannedNo;
             document.getElementById('rawReceivedValue').innerText = scannedNo;
             window.history.replaceState({}, document.title, window.location.pathname);
             showScreen('screenDebugCheck');
         } else {
             logDebug("ℹ スキャンデータなし -> メイン画面（QRスキャン待ち）で静止");
-            document.getElementById('statusTehai').innerText = "なし（通常起動）";
+            document.getElementById('statusTehai').innerText = "なし（通常起動）");
             showScreen('screenMain');
         }
     }
 
-    function proceedToNormalProcess() {
-        logDebug(`▶ ユーザー確認完了。通常処理へ移行: [${tempScannedNo}]`);
-        onScanSuccess(tempScannedNo);
-    }
-
     async function fetchAndCacheAllMasters() {
         const res = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-        if (res && res.device) {
+        if (res && res.success && Array.isArray(res.processes)) {
             masters = res;
             localStorage.setItem('cache_masters', JSON.stringify(masters));
+            
             const verRes = await callGas(GAS_URL + "?action=getSpreadsheetVersion");
-            if (verRes && verRes.version) localStorage.setItem('cache_version', verRes.version);
+            if (verRes && verRes.version) {
+                localStorage.setItem('cache_version', verRes.version);
+            }
+            logDebug("✔ マスターとバージョンをキャッシュ保存完了（端末登録状態: " + (res.device ? res.device.name : "未登録") + "）");
+            document.getElementById('statusCache').innerText = "あり（新規取得・保存完了）";
+        } else {
+            logDebug("❌ マスター取得失敗");
+            document.getElementById('statusCache').innerText = "取得失敗";
         }
     }
 
@@ -245,25 +247,40 @@
         try {
             const localVersion = localStorage.getItem('cache_version');
             const verRes = await callGas(GAS_URL + "?action=getSpreadsheetVersion");
-            if (verRes && verRes.success && verRes.version && localVersion !== verRes.version) {
-                const fresh = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
-                if (fresh && fresh.device) {
-                    masters = fresh;
-                    localStorage.setItem('cache_masters', JSON.stringify(masters));
-                    localStorage.setItem('cache_version', verRes.version);
-                    updateMainStationUI();
+            
+            if (verRes && verRes.success && verRes.version) {
+                if (localVersion !== verRes.version) {
+                    logDebug("ℹ バージョン変更検知：裏でマスターを再取得します");
+                    const fresh = await callGas(GAS_URL + "?action=getAllMasters&deviceId=" + deviceId);
+                    if (fresh && fresh.success && Array.isArray(fresh.processes)) {
+                        masters = fresh;
+                        localStorage.setItem('cache_masters', JSON.stringify(masters));
+                        localStorage.setItem('cache_version', verRes.version);
+                        updateMainStationUI();
+                        logDebug("✔ 裏での自動マスター更新完了");
+                    }
+                } else {
+                    logDebug("✔ マスターは最新です");
                 }
             }
-        } catch (e) {}
+        } catch (e) {
+            logDebug("⚠ バージョン確認スキップ");
+        }
     }
 
     function updateMainStationUI() {
-        if (masters.device) {
+        if (masters.device && masters.device.name) {
             document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
             document.getElementById('btnStartScan').style.display = "block"; 
         } else {
-            document.getElementById('currentStation').innerText = "端末設定が見つかりません（管理者設定より登録してください）";
+            document.getElementById('currentStation').innerText = "⚠ 端末設定が未登録です\n（管理者設定より登録してください）";
+            document.getElementById('btnStartScan').style.display = "none"; // 未登録時はスキャンボタン非表示
         }
+    }
+
+    function proceedToNormalProcess() {
+        logDebug(`▶ 通常処理へ移行: [${tempScannedNo}]`);
+        onScanSuccess(tempScannedNo);
     }
 
     // ==========================================
@@ -592,11 +609,21 @@
         } else { alert("パスワードが違います"); }
     }
     
+    // ★管理者設定保存時：確実にキャッシュを破棄して再取得させる
     async function saveConfig() {
+        document.getElementById('loading-text').innerText = "端末設定を保存中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+
         const sel = Array.from(document.querySelectorAll('#configList button')).filter(b => b.className === "btn-blue").map(b => b.innerText).join(',');
-        await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(document.getElementById('inputDeviceName').value)}&processList=${encodeURIComponent(sel)}`);
+        const devNameInput = document.getElementById('inputDeviceName').value;
+
+        await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(devNameInput)}&processList=${encodeURIComponent(sel)}`);
+        
+        // 保存完了後、ローカルキャッシュを完全クリア
         localStorage.removeItem('cache_masters');
         localStorage.removeItem('cache_version');
+        
+        // 再読込して最新のT_端末情報を取り込む
         location.reload();
     }
     
