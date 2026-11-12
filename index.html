@@ -273,58 +273,75 @@
     }
 
     // ==========================================
-    // 2. スキャン成功時の処理（バックグラウンド高速判定）
+    // 2. スキャン成功時の処理（UIブロック完全解消版）
     // ==========================================
     async function onScanSuccess(no) {
-        logDebug(`▶ [onScanSuccess] ステータス高速確認開始: [${no}]`);
+        logDebug(`▶ [onScanSuccess] 判定処理開始: [${no}]`);
         state = { tehai: String(no).trim(), proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' };
         
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
+        
+        // ① まずローカルキャッシュを高速チェック
+        let foundData = activeCache.items.get(state.tehai);
+
+        // ② キャッシュになくても、UIをブロックせず即座に詳細画面を開いて工程選択を開始させる
         showScreen('screenDetail');
 
-        const configStr = masters.device?.config || "";
-        const checkUrl = `${GAS_URL}?action=checkStatus&tehaiNo=${encodeURIComponent(state.tehai)}&processList=${encodeURIComponent(configStr)}`;
-        const res = await callGas(checkUrl);
-
-        if (res.success && res.mode === "END") {
-            state.mode = "END";
-            state.proc = res.process;
-            state.staff = res.workData[2] || ''; 
-            state.mac = res.workData[3] || '';
-            state.cut1 = res.workData[8] || '';
-            state.cut2 = res.workData[9] || '';
-            state.cut3 = res.workData[10] || '';
-            state.wire = res.workData[11] || '';
-            
-            const pUpper = state.proc.toUpperCase();
-            if (pUpper.includes("HT")) {
-                document.getElementById('slot-staff').innerHTML = 'HT項目: <strong id="val-staff">---</strong>';
-                document.getElementById('slot-mac').style.display = 'none';
-                document.getElementById('slot-cut').style.display = 'none';
-                document.getElementById('slot-wire').style.display = 'none';
-            } else if (pUpper === "WE1" || pUpper === "WE2") {
-                document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
-                document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
-                document.getElementById('slot-mac').style.display = 'block';
-                document.getElementById('slot-cut').style.display = 'block';
-                document.getElementById('slot-wire').style.display = 'block';
-            } else {
-                document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
-                document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
-                document.getElementById('slot-mac').style.display = 'block';
-                document.getElementById('slot-cut').style.display = 'none';
-                document.getElementById('slot-wire').style.display = 'none';
-            }
-
-            refreshSlots();
-            renderFinalConfirm("完了報告を送信しますか？");
-        } else if (res.success && res.mode === "START") {
-            state.mode = "START";
-            renderStartProcUI();
+        if (foundData) {
+            logDebug(`⚡ 【ローカルキャッシュヒット】即時 END 判定`);
+            applyEndMode(foundData);
         } else {
-            alert("エラー: " + (res.message || "対象データが見つかりません"));
-            resetToMain();
+            logDebug(`ℹ キャッシュなし -> 初期状態はSTARTとして即座に工程選択UIを描画`);
+            state.mode = "START";
+            renderStartProcUI(); // ★ここで即座にボタンを描画するため、操作がブロックされません
+
+            // ③ 画面操作と「並行（ノンブロッキング）」して、裏でDB読み込みを走らせる
+            if (!activeCache.isLoaded) {
+                preloadActiveDataInBackground().then(() => {
+                    // 裏読み込みが完了した時点で、もし既にデータがあれば（すでに行われている作業の終了などであれば）自動でENDモードに切り替える親切設計
+                    const lateFound = activeCache.items.get(state.tehai);
+                    if (lateFound && lateFound[4] !== "" && lateFound[4] != null) {
+                        logDebug(`⚡ 【裏読み込み後ヒット】後からENDデータ検知 -> 画面を完了モードに切り替え`);
+                        applyEndMode(lateFound);
+                    }
+                });
+            }
         }
+    }
+
+    // ENDモードのUI適用をまとめたヘルパー関数
+    function applyEndMode(workData) {
+        state.mode = "END";
+        state.proc = workData[1];
+        state.staff = workData[2] || ''; 
+        state.mac = workData[3] || '';
+        state.cut1 = workData[8] || '';
+        state.cut2 = workData[9] || '';
+        state.cut3 = workData[10] || '';
+        state.wire = workData[11] || '';
+        
+        const pUpper = state.proc.toUpperCase();
+        if (pUpper.includes("HT")) {
+            document.getElementById('slot-staff').innerHTML = 'HT項目: <strong id="val-staff">---</strong>';
+            document.getElementById('slot-mac').style.display = 'none';
+            document.getElementById('slot-cut').style.display = 'none';
+            document.getElementById('slot-wire').style.display = 'none';
+        } else if (pUpper === "WE1" || pUpper === "WE2") {
+            document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+            document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+            document.getElementById('slot-mac').style.display = 'block';
+            document.getElementById('slot-cut').style.display = 'block';
+            document.getElementById('slot-wire').style.display = 'block';
+        } else {
+            document.getElementById('slot-staff').innerHTML = '作業者: <strong id="val-staff">---</strong>';
+            document.getElementById('slot-mac').innerHTML = '装置名: <strong id="val-mac">---</strong>';
+            document.getElementById('slot-mac').style.display = 'block';
+            document.getElementById('slot-cut').style.display = 'none';
+            document.getElementById('slot-wire').style.display = 'none';
+        }
+
+        refreshSlots();
+        renderFinalConfirm("完了報告を送信しますか？");
     }
 
     function renderStartProcUI() {
