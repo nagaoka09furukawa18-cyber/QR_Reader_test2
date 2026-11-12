@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加工進捗管理 V5.8 [並行処理・判定完全版]</title>
+    <title>加工進捗管理 V5.9 [ログ詳細出力版]</title>
     
     <style>
         body { font-family: -apple-system, sans-serif; text-align: center; background: #f4f7f9; padding: 10px; margin: 0; color: #333; }
@@ -38,7 +38,7 @@
     <p id="loading-text">処理中...</p>
 </div>
 <div class="card">
-    <div class="test-badge">【V5.8 並行処理・判定完全版】</div>
+    <div class="test-badge">【V5.9 ログ詳細出力版】</div>
 
     <div id="debug-status-panel">
         <div>システム状態: <span id="statusCache">初期化中...</span></div>
@@ -161,6 +161,7 @@
         loadActiveCacheFromLocalStorage();
 
         if (!masters.processes || masters.processes.length === 0) {
+            logDebug("ℹ マスター未取得のためサーバー取得開始...");
             await fetchAndCacheAllMasters();
         }
 
@@ -169,7 +170,10 @@
 
             if (!masters.device || !masters.device.name || !masters.device.config) {
                 alert("【警告】端末設定が未登録です。まず管理者設定を行ってください。");
+                logDebug("❌ 端末設定未登録のためメイン画面へフォールバック");
+                updateMainStationUI();
                 showScreen('screenMain');
+                document.getElementById('statusCache').innerText = "設定未登録";
                 return;
             }
 
@@ -181,6 +185,7 @@
         updateMainStationUI();
         showScreen('screenMain');
         document.getElementById('statusCache').innerText = "準備完了";
+        logDebug("✔ 初期化完了・メイン画面表示");
     }
 
     async function fetchAndCacheAllMasters() {
@@ -189,6 +194,8 @@
             masters = res;
             localStorage.setItem('cache_masters', JSON.stringify(masters));
             logDebug("✔ マスター取得・保存完了");
+        } else {
+            logDebug("❌ マスター取得失敗");
         }
     }
 
@@ -196,9 +203,11 @@
         if (masters.device && masters.device.name && masters.device.config) {
             document.getElementById('currentStation').innerText = `端末: ${masters.device.name}\n工程: ${masters.device.config}`; 
             document.getElementById('btnStartScan').style.display = "block"; 
+            logDebug(`✔ 端末UI更新: ${masters.device.name} (${masters.device.config})`);
         } else {
             document.getElementById('currentStation').innerText = "⚠ 端末設定が未登録です\n（管理者設定より登録してください）";
             document.getElementById('btnStartScan').style.display = "none";
+            logDebug("⚠ 端末設定が未登録状態です");
         }
     }
 
@@ -219,6 +228,7 @@
     function saveActiveCacheToLocalStorage() {
         try {
             localStorage.setItem('local_active_records', JSON.stringify(Array.from(activeCache.items.entries())));
+            logDebug("✔ ローカルキャッシュ保存完了");
         } catch(e) { logDebug("⚠ ローカルキャッシュ保存エラー"); }
     }
 
@@ -256,7 +266,6 @@
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
         showScreen('screenDetail');
 
-        // ① まず手元のキャッシュをチェック
         let foundData = activeCache.items.get(state.tehai);
 
         if (foundData) {
@@ -265,17 +274,13 @@
             return;
         }
 
-        // ② キャッシュにない場合：
-        // 【重要】UI操作を一切ブロックせず、裏でDBロードを走らせる（完全に並行稼働）
         preloadActiveDataInBackground();
 
-        // 作業者は裏のロードを待つことなく、即座に通常の「新規スタート（工程選択）」操作を始められる！
         logDebug(`ℹ キャッシュなし → 作業者の選択操作を許可しつつ、裏ロードと連動します`);
         state.mode = "START";
         renderStartProcUI();
     }
 
-    // ENDモード適用（開始日時を表示し、終了忘れに気づかせる）
     function applyEndMode(workData) {
         state.mode = "END";
         state.proc = workData[1];
@@ -331,34 +336,31 @@
         renderFinalConfirm("完了報告を送信しますか？");
     }
 
-    // 選択完了時（最終確認の瞬間）に裏ロードの完了を待って最終判定を行う
     async function renderFinalConfirm(msg) {
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = "判定確認中...";
+        logDebug("⏳ 判定確認中...");
 
-        // もし裏でDBロードがまだ走っていれば、ここで確実に完了を待つ
         if (activeCache.promise) {
             logDebug("⏳ 選択完了：裏ロードの完了を待って最終判定を行います...");
             await activeCache.promise;
         }
 
-        // 最終確認：裏ロードが終わったメモリDBに、この手配Noが存在するか？
         const existingData = activeCache.items.get(state.tehai);
 
         if (existingData && state.mode === "START") {
-            // 「新規のつもりで選択を進めていたが、実は裏のDBロードで既に未了データ（ゾンビデータ）として存在していた」場合
             logDebug(`⚠ 【自動切替】DB上に未了データを発見したため、自動的にENDモードへ切り替えます`);
             applyEndMode(existingData);
             return;
         }
 
-        // 通常の確定ボタン表示
         document.getElementById('button-title').innerText = msg;
         const b = document.createElement('button'); 
         b.className = "btn-main " + (state.mode === 'END' ? "btn-blue" : "btn-green"); 
         b.innerText = state.mode === 'END' ? "作業終了を実行" : "作業開始を実行";
         b.onclick = () => { finalizeAction(); };
         document.getElementById('button-area').appendChild(b);
+        logDebug(`✔ 確定ボタン表示完了 (${state.mode === 'END' ? '終了モード' : '開始モード'})`);
     }
 
     function renderStartProcUI() {
@@ -377,11 +379,13 @@
             document.getElementById('button-area').innerHTML = "";
             list.forEach(p => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = p; b.onclick = () => selectProc(p); document.getElementById('button-area').appendChild(b); });
         }
+        logDebug("ℹ 工程選択画面を表示");
     }
 
     function selectProc(p) { 
         state.proc = p; 
         refreshSlots('proc'); 
+        logDebug(`👉 工程選択: [${p}]`);
         const pUpper = p.toUpperCase();
         if (pUpper.includes("HT")) { renderStartHtUI(); } 
         else { renderStartStaffUI(); }
@@ -400,9 +404,10 @@
         document.getElementById('button-title').innerText = "HTリスト選択";
         list.forEach(item => { 
             const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = item; 
-            b.onclick = () => { state.staff = item; state.mac = ""; refreshSlots('staff'); renderFinalConfirm("開始準備完了"); }; 
+            b.onclick = () => { state.staff = item; state.mac = ""; refreshSlots('staff'); logDebug(`👉 HT項目選択: [${item}]`); renderFinalConfirm("開始準備完了"); }; 
             document.getElementById('button-area').appendChild(b); 
         });
+        logDebug("ℹ HT項目選択画面を表示");
     }
 
     function renderStartStaffUI() {
@@ -421,9 +426,10 @@
             document.getElementById('button-title').innerText = "作業者選択";
             list.forEach(s => { const b = document.createElement('button'); b.className = "btn-green"; b.innerText = s; b.onclick = () => selectStaff(s); document.getElementById('button-area').appendChild(b); });
         }
+        logDebug("ℹ 作業者選択画面を表示");
     }
 
-    function selectStaff(s) { state.staff = s; refreshSlots('staff'); renderStartMacUI(); }
+    function selectStaff(s) { state.staff = s; refreshSlots('staff'); logDebug(`👉 作業者選択: [${s}]`); renderStartMacUI(); }
 
     function renderStartMacUI() {
         state.mac = '';
@@ -433,10 +439,12 @@
         document.getElementById('button-title').innerText = "装置選択";
         list.forEach(m => { const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = m; b.onclick = () => { 
             state.mac = m; refreshSlots('mac'); 
+            logDebug(`👉 装置選択: [${m}]`);
             const pUpper = state.proc.toUpperCase();
             if (pUpper === "WE1" || pUpper === "WE2") { renderStartWeCutModeUI(); } 
             else { renderFinalConfirm("開始準備完了"); }
         }; document.getElementById('button-area').appendChild(b); });
+        logDebug("ℹ 装置選択画面を表示");
     }
 
     function renderStartWeCutModeUI() {
@@ -456,11 +464,13 @@
             const b = document.createElement('button'); b.className = m.color; b.innerText = m.label;
             b.onclick = () => {
                 targetCutCount = m.count;
+                logDebug(`👉 カット回数選択: [${m.label}]`);
                 if (targetCutCount === 0) { state.cut1 = "なし"; refreshSlots('cut'); renderStartWeWireUI(); } 
                 else { renderStartWeCutMasterUI(1); }
             };
             document.getElementById('button-area').appendChild(b);
         });
+        logDebug("ℹ カット回数選択画面を表示");
     }
 
     function renderStartWeCutMasterUI(stepIndex) {
@@ -472,13 +482,15 @@
             const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = val;
             b.onclick = () => {
                 selectedCuts.push(val);
-                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCils[1] || ''; state.cut3 = selectedCuts[2] || '';
+                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCuts[1] || ''; state.cut3 = selectedCuts[2] || '';
                 refreshSlots('cut');
+                logDebug(`👉 ${stepIndex}回目カット値: [${val}]`);
                 if (stepIndex < targetCutCount) { renderStartWeCutMasterUI(stepIndex + 1); } 
                 else { renderStartWeWireUI(); }
             };
             document.getElementById('button-area').appendChild(b);
         });
+        logDebug(`ℹ ${stepIndex}回目カット選択画面を表示`);
     }
 
     function renderStartWeWireUI() {
@@ -489,15 +501,20 @@
         document.getElementById('button-title').innerText = "線径選択";
         list.forEach(wireVal => {
             const b = document.createElement('button'); b.className = "btn-green"; b.innerText = wireVal;
-            b.onclick = () => { state.wire = wireVal; refreshSlots('wire'); renderFinalConfirm("開始準備完了"); };
+            b.onclick = () => { state.wire = wireVal; refreshSlots('wire'); logDebug(`👉 線径選択: [${wireVal}]`); renderFinalConfirm("開始準備完了"); };
             document.getElementById('button-area').appendChild(b);
         });
+        logDebug("ℹ 線径選択画面を表示");
     }
 
-    function restartSelection() { state.mode = "START"; renderStartProcUI(); }
+    function restartSelection() { 
+        logDebug("↺ 選択をやり直します");
+        state.mode = "START"; 
+        renderStartProcUI(); 
+    }
 
     async function finalizeAction() {
-        logDebug("▶ [finalizeAction] データ保存処理開始");
+        logDebug(`▶ [finalizeAction] データ保存処理開始 (${state.mode})`);
         document.getElementById('loading-text').innerText = "データ保存中...";
         document.getElementById('loading-overlay').style.display = 'flex';
         const devName = masters.device ? masters.device.name : "不明";
@@ -514,24 +531,27 @@
                     `&type=${state.mode === 'END' ? 'end' : 'start'}` +
                     `&deviceId=${deviceId}`;
                     
+        logDebug("📡 GASへ通信中...");
         const res = await callGas(url);
         document.getElementById('loading-overlay').style.display = 'none';
 
-        if (res.success) {
+        if (res && res.success) {
             logDebug("✔ データ保存成功");
             if (state.mode === 'START') {
                 const newRow = [state.tehai, state.proc, state.staff, state.mac, new Date().toISOString(), "", devName, deviceId, state.cut1, state.cut2, state.cut3, state.wire];
                 activeCache.items.set(state.tehai, newRow);
                 saveActiveCacheToLocalStorage();
+                logDebug("✔ キャッシュに新規データを追加しました");
             } else if (state.mode === 'END') {
                 activeCache.items.delete(state.tehai);
                 saveActiveCacheToLocalStorage();
+                logDebug("✔ キャッシュからデータを削除しました");
             }
             alert("成功しました");
             resetToMain();
         } else {
-            logDebug("❌ データ保存失敗: " + res.message);
-            alert("失敗: " + res.message);
+            logDebug("❌ データ保存失敗: " + (res?.message || "不明なエラー"));
+            alert("失敗: " + (res?.message || "不明なエラー"));
         }
     }
 
@@ -555,38 +575,54 @@
     function showScreen(id) { 
         document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); 
         document.getElementById(id).classList.add('active'); 
+        logDebug(`📺 画面切替: [${id}]`);
     }
     
     async function resetToMain() { 
+        logDebug("🏠 メイン画面へ復帰処理開始");
         state = { tehai: '', proc: '', staff: '', mac: '', cut1: '', cut2: '', cut3: '', wire: '', mode: '' }; 
         selectedCuts = []; 
         targetCutCount = 0;
         
-        // メイン画面に戻る際、端末設定やUI表示を確実に再構築する
+        try {
+            const cachedMasters = localStorage.getItem('cache_masters');
+            if (cachedMasters) {
+                masters = JSON.parse(cachedMasters);
+            }
+        } catch (e) {
+            logDebug("⚠ resetToMainでのマスター読込エラー");
+        }
+
         updateMainStationUI();
         document.getElementById('statusCache').innerText = "準備完了";
         
         showScreen('screenMain'); 
-        logDebug("ℹ メイン画面に復帰しました");
+        logDebug("✔ メイン画面へ正常に復帰しました（準備完了）");
     }
     
-    async function authAdmin() { showScreen('screenAuth'); }
+    async function authAdmin() { 
+        logDebug("🔑 管理者認証画面へ移行");
+        showScreen('screenAuth'); 
+    }
     
     async function checkPassword() {
         const passwordInput = document.getElementById('adminPwInput');
         const pwValue = passwordInput ? passwordInput.value : "";
         if (!pwValue) { alert("パスワードを入力してください"); return; }
 
+        logDebug("🔑 パスワード認証確認中...");
         document.getElementById('loading-text').innerText = "認証中...";
         document.getElementById('loading-overlay').style.display = 'flex';
         const res = await callGas(GAS_URL + "?action=getAdminPassword");
         
         if (!masters.processes || masters.processes.length === 0) {
+            logDebug("ℹ マスター未取得のため設定画面用に取得します");
             await fetchAndCacheAllMasters();
         }
         document.getElementById('loading-overlay').style.display = 'none';
 
         if (res && pwValue === String(res.password).trim()) {
+            logDebug("✔ 認証成功: 端末詳細設定画面へ移行");
             showScreen('screenConfig');
             if (masters.device && masters.device.name) {
                 document.getElementById('inputDeviceName').value = masters.device.name;
@@ -602,10 +638,14 @@
                 b.onclick = () => { b.className = (b.className === "btn-blue") ? "btn-gray" : "btn-blue"; }; 
                 list.appendChild(b); 
             });
-        } else { alert("パスワードが違います"); }
+        } else { 
+            logDebug("❌ パスワード不一致");
+            alert("パスワードが違います"); 
+        }
     }
     
     async function saveConfig() {
+        logDebug("💾 端末設定の保存を開始...");
         document.getElementById('loading-text').innerText = "端末設定を保存中...";
         document.getElementById('loading-overlay').style.display = 'flex';
 
@@ -615,6 +655,7 @@
         if (!devNameInput.trim()) {
             alert("端末名を入力してください。");
             document.getElementById('loading-overlay').style.display = 'none';
+            logDebug("⚠ 端末名未入力エラー");
             return;
         }
 
@@ -624,6 +665,7 @@
         localStorage.removeItem('local_active_records');
         
         document.getElementById('loading-overlay').style.display = 'none';
+        logDebug("✔ 設定保存完了・ページを再読み込みします");
         location.reload();
     }
     
