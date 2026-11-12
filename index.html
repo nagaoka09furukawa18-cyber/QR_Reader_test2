@@ -306,7 +306,7 @@
     }
 
     // ==========================================
-    // 3. QRスキャン時の判定・処理フロー（完全版）
+    // 3. QRスキャン時の判定・処理フロー（UIブロッキング完全排除版）
     // ==========================================
     async function onScanSuccess(no) {
         logDebug(`▶ [onScanSuccess] スキャン処理開始: [${no}]`);
@@ -315,43 +315,46 @@
         document.getElementById('tehaiDisplay').innerHTML = `手配No：<span>${state.tehai}</span>`;
         showScreen('screenDetail');
 
-        // 1. まずローカルキャッシュをチェック（最速ルート）
+        // 1. ローカルキャッシュ（localStorage）をロード
         loadActiveCacheFromLocalStorage();
         let foundData = activeCache.items.get(state.tehai);
 
         if (foundData) {
-            logDebug(`⚡ 【キャッシュヒット】終了作業として即時END判定（DB読み込みなし・0秒表示）`);
+            logDebug(`⚡ 【キャッシュヒット】即時ENDモードへ`);
             applyEndMode(foundData);
             return;
         }
 
-        // 2. キャッシュに手配Noがない場合：DBから読み込み＆メモリDBを確認
+        // 2. キャッシュにない場合でも、UIを絶対にフリーズさせないため
+        //    「確認中...」の表示を出しつつ、DBロードはawaitせずに裏で走らせる（Fire-and-Forget）
         document.getElementById('button-title').innerText = "ステータス確認中...";
         document.getElementById('button-area').innerHTML = "<p style='color:#666;'>データベースを確認中...</p>";
         
-        logDebug("ℹ キャッシュに手配Noがないため、DBからアクティブデータを読み込んで確認します...");
-        await preloadActiveDataInBackground();
+        logDebug("ℹ キャッシュに手配Noがないため、DBからバックグラウンドで同期を取得します...");
 
-        // 3. メモリDBを再検索
-        foundData = activeCache.items.get(state.tehai);
+        // ★【重要】awaitを外して、UIスレッドをブロックしないようにする
+        preloadActiveDataInBackground().then(() => {
+            // 裏ロードが完了した時点で、再度メモリMap（activeCache.items）をチェック
+            let reCheckedData = activeCache.items.get(state.tehai);
 
-        if (foundData) {
-            // ローカルキャッシュにはなかったが、DB（メモリDB）に存在した（ゾンビデータ・他端末での作業など）
-            logDebug(`⚠ 【DB検出】ローカルキャッシュにはありませんでしたが、DB上に未了データが存在するため強制ENDモードへ`);
-            
-            // 次回から一瞬で判定できるようローカルキャッシュにも登録
-            activeCache.items.set(state.tehai, foundData);
-            saveActiveCacheToLocalStorage();
-
-            applyEndMode(foundData);
-        } else {
-            // ローカルキャッシュにも、DB（メモリDB）にもデータが存在しない → 【作業開始（START）】判断
-            logDebug(`ℹ メモリDBにもデータが無いことを確認 → 新規STARTモードへ`);
+            if (reCheckedData) {
+                logDebug(`⚠ 【DB検出(遅延ロード)】未了データ検出のためENDモードへ切替`);
+                activeCache.items.set(state.tehai, reCheckedData);
+                saveActiveCacheToLocalStorage();
+                applyEndMode(reCheckedData);
+            } else {
+                logDebug(`ℹ DBにもデータなし → 新規STARTモードへ切替`);
+                state.mode = "START";
+                renderStartProcUI();
+            }
+        }).catch(err => {
+            logDebug(`❌ バックグラウンド読込エラー: ${err}`);
+            // エラー時もフリーズさせず、新規STARTとして操作可能にする
             state.mode = "START";
             renderStartProcUI();
-        }
+        });
     }
-
+    
     // ENDモード適用（開始日時を表示し、終了忘れ・放置に気づかせる）
     function applyEndMode(workData) {
         state.mode = "END";
@@ -633,21 +636,51 @@
     async function checkPassword() {
         const passwordInput = document.getElementById('adminPwInput');
         const pwValue = passwordInput ? passwordInput.value : "";
-        if (!pwValue) { alert("パスワードが違います"); return; }
+        if (!pwValue) { alert("パスワードを入力してください"); return; }
+
+        document.getElementById('loading-text').innerText = "認証およびマスター確認中...";
+        document.getElementById('loading-overlay').style.display = 'flex';
+
         const res = await callGas(GAS_URL + "?action=getAdminPassword");
+        
+        // もしマスターが空（キャッシュクリア後など）なら、ここで一括取得を試みる
+        if (!masters.processes || masters.processes.length === 0) {
+            await fetchAndCacheAllMasters();
+        }
+
+        document.getElementById('loading-overlay').style.display = 'none';
+
         if (res && pwValue === String(res.password).trim()) {
             showScreen('screenConfig');
+            
+            // 端末名がすでにあれば入力欄に反映
+            if (masters.device && masters.device.name) {
+                document.getElementById('inputDeviceName').value = masters.device.name;
+            }
+
             const cur = (masters.device?.config || "").split(',');
             const list = document.getElementById('configList'); 
             list.innerHTML = "";
+            
+            if (!masters.processes || masters.processes.length === 0) {
+                list.innerHTML = "<p style='color:red;'>工程マスターが取得できませんでした。通信環境を確認してください。</p>";
+                return;
+            }
+
             masters.processes.forEach(p => { 
                 const b = document.createElement('button'); 
                 b.innerText = p; 
                 b.className = cur.includes(p) ? "btn-blue" : "btn-gray"; 
-                b.onclick = () => b.className = b.className === "btn-blue" ? "btn-gray" : "btn-gray"; 
+                b.style.margin = "4px";
+                // クリックで選択・非選択をトグル
+                b.onclick = () => {
+                    b.className = (b.className === "btn-blue") ? "btn-gray" : "btn-blue";
+                }; 
                 list.appendChild(b); 
             });
-        } else { alert("パスワードが違います"); }
+        } else { 
+            alert("パスワードが違います"); 
+        }
     }
     
     async function saveConfig() {
