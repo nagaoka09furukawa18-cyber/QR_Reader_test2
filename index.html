@@ -654,13 +654,14 @@
         logDebug("💾 端末設定の保存を開始...");
         document.getElementById('loading-text').innerText = "端末設定を保存中...";
         document.getElementById('loading-overlay').style.display = 'flex';
+        await new Promise(resolve => requestAnimationFrame(resolve));
 
         const sel = Array.from(document.querySelectorAll('#configList button')).filter(b => b.className === "btn-blue").map(b => b.innerText).join(',');
         const devNameInput = document.getElementById('inputDeviceName').value;
 
         if (!devNameInput.trim()) {
-            alert("端末名を入力してください。");
             document.getElementById('loading-overlay').style.display = 'none';
+            alert("端末名を入力してください。");
             logDebug("⚠ 端末名未入力エラー");
             return;
         }
