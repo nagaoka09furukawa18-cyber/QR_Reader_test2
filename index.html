@@ -27,9 +27,9 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .test-badge { background: #28a745; color: white; font-size: 12px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
         
-        #debug-status-panel { background: #e9ecef; border: 1px solid #ced4da; border-radius: 8px; padding: 10px; margin-bottom: 15px; text-align: left; font-size: 13px; }
+        #debug-status-panel { display: none; background: #e9ecef; border: 1px solid #ced4da; border-radius: 8px; padding: 10px; margin-bottom: 15px; text-align: left; font-size: 13px; }
         #debug-status-panel span { font-weight: bold; color: #007bff; }
-        #debug-monitor { margin-top: 15px; background: #222; color: #0f0; font-family: monospace; font-size: 11px; text-align: left; padding: 10px; border-radius: 8px; max-height: 120px; overflow-y: auto; word-break: break-all; }
+        #debug-monitor { display: none; margin-top: 15px; background: #222; color: #0f0; font-family: monospace; font-size: 11px; text-align: left; padding: 10px; border-radius: 8px; max-height: 120px; overflow-y: auto; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -79,7 +79,14 @@
         <h3>端末詳細設定</h3>
         <input type="text" id="inputDeviceName" placeholder="端末名" style="padding: 10px; font-size: 16px; width: 80%;">
         <div id="configList" style="margin:15px 0; text-align:left;"></div>
+        <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 8px; text-align: left;">
+            <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                <input type="checkbox" id="chkDebugLog" style="width: 18px; height: 18px;">
+                デバッグログを表示する
+            </label>
+        </div>
         <button class="btn-green btn-main" onclick="saveConfig()">設定保存</button>
+        <button class="btn-gray" onclick="resetToMain()" style="width: 100%; padding: 12px;">戻る</button>
     </div>
 
     <div id="debug-monitor">[System] モニター起動...</div>
@@ -102,9 +109,20 @@
         promise: null
     };
 
-    function logDebug(msg) {
+    let debugLogEnabled = localStorage.getItem('test_debugLogEnabled') === 'true';
+
+    function applyDebugLogVisibility() {
+        const displayStyle = debugLogEnabled ? 'block' : 'none';
+        const panel = document.getElementById('debug-status-panel');
         const monitor = document.getElementById('debug-monitor');
-        if (monitor) {
+        if (panel) panel.style.display = displayStyle;
+        if (monitor) monitor.style.display = displayStyle;
+    }
+
+    function logDebug(msg) {
+        if (!debugLogEnabled) return;
+        const monitor = document.getElementById('debug-monitor');
+        if (monitor && debugLogEnabled) {
             const timeStr = new Date().toTimeString().split(' ')[0] + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
             monitor.innerHTML += `<div>[${timeStr}] ${msg}</div>`;
             monitor.scrollTop = monitor.scrollHeight;
@@ -137,6 +155,7 @@
     // 1. 初期起動時処理
     // ==========================================
     async function init() {
+        applyDebugLogVisibility();
         logDebug("⚡ [init] 初期化開始 (ID: " + deviceId + ")");
         
         try {
@@ -612,6 +631,8 @@
             if (masters.device && masters.device.name) {
                 document.getElementById('inputDeviceName').value = masters.device.name;
             }
+            const chkLog = document.getElementById('chkDebugLog');
+            if (chkLog) chkLog.checked = debugLogEnabled;
             const cur = (masters.device?.config || "").split(',');
             const list = document.getElementById('configList'); 
             list.innerHTML = "";
@@ -644,6 +665,11 @@
             return;
         }
 
+        const chkLog = document.getElementById('chkDebugLog');
+        debugLogEnabled = chkLog ? chkLog.checked : false;
+        localStorage.setItem('test_debugLogEnabled', String(debugLogEnabled));
+        applyDebugLogVisibility();
+
         await callGas(`${GAS_URL}?action=saveDeviceConfig&deviceId=${deviceId}&deviceName=${encodeURIComponent(devNameInput)}&processList=${encodeURIComponent(sel)}`);
         
         localStorage.removeItem('cache_masters');
@@ -652,7 +678,6 @@
         document.getElementById('loading-overlay').style.display = 'none';
         logDebug("✔ 設定保存完了・ページを再読み込みします");
         location.reload();
-    }
     
     window.onload = init;
 </script>
