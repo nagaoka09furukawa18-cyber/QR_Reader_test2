@@ -441,56 +441,41 @@
             state.mac = m; refreshSlots('mac'); 
             logDebug(`👉 装置選択: [${m}]`);
             const pUpper = state.proc.toUpperCase();
-            if (pUpper === "WE1" || pUpper === "WE2") { renderStartWeCutModeUI(); } 
+            if (pUpper === "WE1" || pUpper === "WE2") { renderStartWeCutUI(); } 
             else { renderFinalConfirm("開始準備完了"); }
         }; document.getElementById('button-area').appendChild(b); });
         logDebug("ℹ 装置選択画面を表示");
     }
 
-    function renderStartWeCutModeUI() {
+    function renderStartWeCutUI() {
         document.getElementById('slot-cut').style.display = 'block';
-        selectedCuts = []; targetCutCount = 0;
-        state.cut1 = ''; state.cut2 = ''; state.cut3 = '';
+        selectedCuts = [];
+        targetCutCount = 0;
+        state.cut1 = '';
+        state.cut2 = '';
+        state.cut3 = '';
         refreshSlots('cut');
-        const modes = [
-            { label: "なし", count: 0, color: "btn-gray" },
-            { label: "1カット", count: 1, color: "btn-blue" },
-            { label: "2カット", count: 2, color: "btn-blue" },
-            { label: "3カット", count: 3, color: "btn-blue" }
-        ];
+
+        const list = masters.weCutList || [];
         document.getElementById('button-area').innerHTML = "";
         document.getElementById('button-title').innerText = "カット回数選択";
-        modes.forEach(m => {
-            const b = document.createElement('button'); b.className = m.color; b.innerText = m.label;
-            b.onclick = () => {
-                targetCutCount = m.count;
-                logDebug(`👉 カット回数選択: [${m.label}]`);
-                if (targetCutCount === 0) { state.cut1 = "なし"; refreshSlots('cut'); renderStartWeWireUI(); } 
-                else { renderStartWeCutMasterUI(1); }
-            };
-            document.getElementById('button-area').appendChild(b);
-        });
-        logDebug("ℹ カット回数選択画面を表示");
-    }
 
-    function renderStartWeCutMasterUI(stepIndex) {
-        refreshSlots('cut');
-        const masterList = masters.weCutList || [];
-        document.getElementById('button-area').innerHTML = "";
-        document.getElementById('button-title').innerText = `【${stepIndex}回目】カット数選択`;
-        masterList.forEach(val => {
-            const b = document.createElement('button'); b.className = "btn-blue"; b.innerText = val;
+        list.forEach(val => {
+            const b = document.createElement('button');
+            b.className = "btn-blue";
+            b.innerText = val;
             b.onclick = () => {
-                selectedCuts.push(val);
-                state.cut1 = selectedCuts[0] || ''; state.cut2 = selectedCuts[1] || ''; state.cut3 = selectedCuts[2] || '';
+                state.cut1 = val;
+                state.cut2 = '';
+                state.cut3 = '';
                 refreshSlots('cut');
-                logDebug(`👉 ${stepIndex}回目カット値: [${val}]`);
-                if (stepIndex < targetCutCount) { renderStartWeCutMasterUI(stepIndex + 1); } 
-                else { renderStartWeWireUI(); }
+                logDebug(`👉 カット回数選択: [${val}]`);
+                renderStartWeWireUI();
             };
             document.getElementById('button-area').appendChild(b);
         });
-        logDebug(`ℹ ${stepIndex}回目カット選択画面を表示`);
+
+        logDebug("ℹ カット回数リスト選択画面を表示");
     }
 
     function renderStartWeWireUI() {
