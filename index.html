@@ -155,6 +155,13 @@
     // 1. 初期起動時処理
     // ==========================================
     async function init() {
+        const showInitSpinner = sessionStorage.getItem('showSpinnerOnInit') === 'true';
+        if (showInitSpinner) {
+            sessionStorage.removeItem('showSpinnerOnInit');
+            document.getElementById('loading-text').innerText = "初期化中...";
+            document.getElementById('loading-overlay').style.display = 'flex';
+        }
+
         applyDebugLogVisibility();
         logDebug("⚡ [init] 初期化開始 (ID: " + deviceId + ")");
         
@@ -188,6 +195,7 @@
             window.history.replaceState({}, document.title, window.location.pathname);
 
             if (!masters.device || !masters.device.name || !masters.device.config) {
+                if (showInitSpinner) document.getElementById('loading-overlay').style.display = 'none';
                 alert("【警告】端末設定が未登録です。まず管理者設定を行ってください。");
                 logDebug("❌ 端末設定未登録のためメイン画面へフォールバック");
                 updateMainStationUI();
@@ -196,6 +204,7 @@
                 return;
             }
 
+            if (showInitSpinner) document.getElementById('loading-overlay').style.display = 'none';
             logDebug(`🎯 【スキャン受付】 [${scannedNo}] -> 並行処理・判定フロー開始`);
             onScanSuccessParallel(scannedNo);
             return;
@@ -204,6 +213,7 @@
         updateMainStationUI();
         showScreen('screenMain');
         document.getElementById('statusCache').innerText = "準備完了";
+        if (showInitSpinner) document.getElementById('loading-overlay').style.display = 'none';
         logDebug("✔ 初期化完了・メイン画面表示");
     }
 
@@ -675,6 +685,7 @@
         
         localStorage.removeItem('cache_masters');
         localStorage.removeItem('local_active_records');
+        sessionStorage.setItem('showSpinnerOnInit', 'true');
         
         document.getElementById('loading-overlay').style.display = 'none';
         logDebug("✔ 設定保存完了・ページを再読み込みします");
